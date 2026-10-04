@@ -1,0 +1,575 @@
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local CoreGui = game:GetService("CoreGui")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+
+local NetworkRoot = ReplicatedStorage:WaitForChild("ModuleLoader")
+    :WaitForChild("Shared")
+    :WaitForChild("Network")
+    :WaitForChild("RemoteEvent")
+
+local TowerAdd     = NetworkRoot:WaitForChild("TowerAdd")
+local TowerUpgrade = NetworkRoot:WaitForChild("TowerUpgrade")
+local TowerSell    = NetworkRoot:WaitForChild("TowerSell")
+
+local rawFireServer = {
+    [TowerAdd]     = TowerAdd.FireServer,
+    [TowerUpgrade] = TowerUpgrade.FireServer,
+    [TowerSell]    = TowerSell.FireServer,
+}
+
+local recordedActions = {}
+local isRecording = false
+local isPlaying = false
+local isMinimized = false
+local recordingStartTime = 0
+
+-- --------------------------------------------------------------------
+-- TRACKING ID MAPPING
+-- --------------------------------------------------------------------
+-- Saat RECORD:
+--   placeIndexToUnitId[1] = "84e788a1-..."   -- place ke-1 kirim UnitId ini
+--   serverIdToPlaceIndex["a03c1eed-..."] = 1 -- server balas dgn Id ini untuk place ke-1
+--
+-- Saat PLAYBACK:
+--   newServerIdByPlaceIndex[1] = "70755aee-..."  -- place ke-1 dapat Id baru ini
+-- --------------------------------------------------------------------
+local placeCounter = 0                          -- counter Place saat RECORD
+local serverIdToPlaceIndex = {}                 -- Id server -> place index (RECORD)
+local lastPlaceServerId = nil                   -- Id server dari Place terakhir (RECORD)
+local newServerIdByPlaceIndex = {}              -- place index -> Id baru (PLAYBACK)
+
+-- Queue waiter untuk Place baru saat playback
+local placeResponseWaiters = {}                 -- {cb = function, resolved = false}
+local pendingPlaceResponses = {}                -- balasan server yang belum di-consume
+
+-- --------------------------------------------------------------------
+-- UI
+-- --------------------------------------------------------------------
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "TowerMacroUI"
+ScreenGui.ResetOnSpawn = false
+pcall(function() ScreenGui.Parent = CoreGui end)
+if not ScreenGui.Parent then
+    ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+end
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, 340, 0, 310)
+MainFrame.Position = UDim2.new(0.05, 0, 0.3, 0)
+MainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.Draggable = true
+MainFrame.ClipsDescendants = true
+MainFrame.Parent = ScreenGui
+
+local UICorner = Instance.new("UICorner")
+UICorner.CornerRadius = UDim.new(0, 8)
+UICorner.Parent = MainFrame
+
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, 0, 0, 35)
+Title.BackgroundColor3 = Color3.fromRGB(35, 35, 42)
+Title.Text = "  Tower Macro - Place/Upgrade/Sell"
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.TextSize = 13
+Title.Font = Enum.Font.SourceSansBold
+Title.TextXAlignment = Enum.TextXAlignment.Left
+Title.Parent = MainFrame
+
+local TitleCorner = Instance.new("UICorner")
+TitleCorner.CornerRadius = UDim.new(0, 8)
+TitleCorner.Parent = Title
+
+local MinimizeBtn = Instance.new("TextButton")
+MinimizeBtn.Size = UDim2.new(0, 25, 0, 25)
+MinimizeBtn.Position = UDim2.new(1, -30, 0, 5)
+MinimizeBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+MinimizeBtn.Text = "-"
+MinimizeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+MinimizeBtn.Font = Enum.Font.SourceSansBold
+MinimizeBtn.TextSize = 16
+MinimizeBtn.Parent = Title
+
+local MinCorner = Instance.new("UICorner")
+MinCorner.CornerRadius = UDim.new(0, 4)
+MinCorner.Parent = MinimizeBtn
+
+local Container = Instance.new("Frame")
+Container.Size = UDim2.new(1, 0, 1, -35)
+Container.Position = UDim2.new(0, 0, 0, 35)
+Container.BackgroundTransparency = 1
+Container.Parent = MainFrame
+
+local StatusLabel = Instance.new("TextLabel")
+StatusLabel.Size = UDim2.new(1, -20, 0, 25)
+StatusLabel.Position = UDim2.new(0, 10, 0, 5)
+StatusLabel.BackgroundTransparency = 1
+StatusLabel.Text = "Status: IDLE"
+StatusLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
+StatusLabel.TextSize = 13
+StatusLabel.Font = Enum.Font.SourceSans
+StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+StatusLabel.Parent = Container
+
+local RecordBtn = Instance.new("TextButton")
+RecordBtn.Size = UDim2.new(0.45, -5, 0, 35)
+RecordBtn.Position = UDim2.new(0, 10, 0, 35)
+RecordBtn.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
+RecordBtn.Text = "RECORD"
+RecordBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+RecordBtn.Font = Enum.Font.SourceSansBold
+RecordBtn.TextSize = 14
+RecordBtn.Parent = Container
+
+local BtnCorner1 = Instance.new("UICorner")
+BtnCorner1.CornerRadius = UDim.new(0, 6)
+BtnCorner1.Parent = RecordBtn
+
+local PlayBtn = Instance.new("TextButton")
+PlayBtn.Size = UDim2.new(0.45, -5, 0, 35)
+PlayBtn.Position = UDim2.new(0.5, 5, 0, 35)
+PlayBtn.BackgroundColor3 = Color3.fromRGB(50, 150, 50)
+PlayBtn.Text = "PLAY"
+PlayBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+PlayBtn.Font = Enum.Font.SourceSansBold
+PlayBtn.TextSize = 14
+PlayBtn.Parent = Container
+
+local BtnCorner2 = Instance.new("UICorner")
+BtnCorner2.CornerRadius = UDim.new(0, 6)
+BtnCorner2.Parent = PlayBtn
+
+local LogFrame = Instance.new("ScrollingFrame")
+LogFrame.Size = UDim2.new(1, -20, 0, 180)
+LogFrame.Position = UDim2.new(0, 10, 0, 80)
+LogFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 18)
+LogFrame.BorderSizePixel = 0
+LogFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+LogFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+LogFrame.ScrollBarThickness = 4
+LogFrame.Parent = Container
+
+local UIListLayout = Instance.new("UIListLayout")
+UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+UIListLayout.Padding = UDim.new(0, 2)
+UIListLayout.Parent = LogFrame
+
+MinimizeBtn.MouseButton1Click:Connect(function()
+    isMinimized = not isMinimized
+    if isMinimized then
+        MainFrame.Size = UDim2.new(0, 340, 0, 35)
+        Container.Visible = false
+        MinimizeBtn.Text = "+"
+    else
+        MainFrame.Size = UDim2.new(0, 340, 0, 310)
+        Container.Visible = true
+        MinimizeBtn.Text = "-"
+    end
+end)
+
+-- --------------------------------------------------------------------
+-- LOG
+-- --------------------------------------------------------------------
+local logQueue = {}
+local function queueLog(msg)
+    table.insert(logQueue, msg)
+    print("[MACRO] " .. msg)
+end
+
+local function processLogQueue()
+    if #logQueue == 0 then return end
+    for _, msg in ipairs(logQueue) do
+        local timestamp = string.format("[%.2f]", os.clock() - (recordingStartTime > 0 and recordingStartTime or os.clock()))
+        local LogText = Instance.new("TextLabel")
+        LogText.Size = UDim2.new(1, -5, 0, 16)
+        LogText.BackgroundTransparency = 1
+        LogText.Text = timestamp .. " " .. msg
+        LogText.TextColor3 = Color3.fromRGB(200, 200, 200)
+        LogText.TextSize = 11
+        LogText.Font = Enum.Font.Code
+        LogText.TextXAlignment = Enum.TextXAlignment.Left
+        LogText.Parent = LogFrame
+    end
+    logQueue = {}
+    LogFrame.CanvasPosition = Vector2.new(0, 99999)
+end
+
+RunService.Heartbeat:Connect(processLogQueue)
+
+-- --------------------------------------------------------------------
+-- LISTENER: Server -> Client (TowerAdd) untuk dapat Id server
+-- --------------------------------------------------------------------
+TowerAdd.OnClientEvent:Connect(function(...)
+    local args = {...}
+    local n = select("#", ...)
+    if n == 0 then return end
+
+    local id, unitId
+    for i = 1, n do
+        local a = args[i]
+        if type(a) == "table" then
+            if a.Id then id = a.Id end
+            if a.UnitId then unitId = a.UnitId end
+        end
+    end
+    if not id then return end
+
+    -- Beritahu waiter playback (jika ada)
+    if #placeResponseWaiters > 0 then
+        local w = table.remove(placeResponseWaiters, 1)
+        w.resolved = true
+        w.id = id
+        w.unitId = unitId
+    else
+        -- Kalau tidak ada waiter, simpan ke pending (untuk race condition)
+        table.insert(pendingPlaceResponses, {id = id, unitId = unitId})
+    end
+end)
+
+-- --------------------------------------------------------------------
+-- HELPER
+-- --------------------------------------------------------------------
+local function describeArg(a, depth)
+    depth = depth or 0
+    if depth > 3 then return "..." end
+    local t = typeof(a)
+    if t == "CFrame" then return string.format("CFrame(%.1f,%.1f,%.1f)", a.X, a.Y, a.Z)
+    elseif t == "Vector3" then return string.format("V3(%.1f,%.1f,%.1f)", a.X, a.Y, a.Z)
+    elseif t == "table" then
+        local parts = {}
+        for k, v in pairs(a) do table.insert(parts, tostring(k).."="..describeArg(v, depth+1)) end
+        return "{" .. table.concat(parts, ", ") .. "}"
+    elseif t == "string" then
+        if #a > 30 then return '"'..a:sub(1,8)..'...'..a:sub(-4)..'"' end
+        return '"'..a..'"'
+    else return tostring(a) end
+end
+
+local function getLabel(t)
+    if t == "Place" then return "PLACE" end
+    if t == "Upgrade" then return "UPGRADE" end
+    if t == "Sell" then return "SELL" end
+    return t
+end
+
+local function copyArg(arg)
+    if type(arg) == "table" then
+        local c = {}
+        for k, v in pairs(arg) do c[k] = copyArg(v) end
+        return c
+    end
+    return arg
+end
+
+local function copyArgs(p, n)
+    local c = table.create(n)
+    for i = 1, n do c[i] = copyArg(p[i]) end
+    return c
+end
+
+local function shortId(id)
+    if not id or #id < 8 then return tostring(id) end
+    return id:sub(1, 8)
+end
+
+-- --------------------------------------------------------------------
+-- HOOK RECORD
+-- --------------------------------------------------------------------
+local function recordAction(actionType, remote, packedArgs, argCount)
+    if not isRecording then return end
+    local elapsedTime = os.clock() - recordingStartTime
+    local storedArgs = copyArgs(packedArgs, argCount)
+
+    local entry = {
+        time = elapsedTime,
+        actionType = actionType,
+        remoteName = remote.Name,
+        args = storedArgs,
+        argCount = argCount,
+    }
+
+    if actionType == "Place" then
+        -- Catat UnitId untuk place ini
+        local uid
+        if type(storedArgs[1]) == "table" and storedArgs[1].UnitId then
+            uid = storedArgs[1].UnitId
+        end
+        placeCounter = placeCounter + 1
+        entry.placeIndex = placeCounter
+        entry.unitId = uid
+        queueLog(string.format("REC [%d] PLACE #%d UnitId=%s [t=%.2f]",
+            #recordedActions, placeCounter, shortId(uid), elapsedTime))
+
+    elseif actionType == "Upgrade" or actionType == "Sell" then
+        -- Cari placeIndex dari Id server yang kita kirim
+        local oldId
+        if type(storedArgs[1]) == "table" and storedArgs[1].Id then
+            oldId = storedArgs[1].Id
+        end
+        local pIdx = oldId and serverIdToPlaceIndex[oldId] or nil
+        entry.originalId = oldId
+        entry.placeIndex = pIdx
+        queueLog(string.format("REC [%d] %s Id=%s -> place#%s [t=%.2f]",
+            #recordedActions, getLabel(actionType), shortId(oldId), tostring(pIdx or "?"), elapsedTime))
+    end
+
+    table.insert(recordedActions, entry)
+end
+
+local function handleFireServer(remote, actionType, ...)
+    local n = select("#", ...)
+    if n == 0 then return end
+    local packed = table.pack(...)
+    recordAction(actionType, remote, packed, n)
+end
+
+local hookSuccess = false
+local oldNamecall
+
+if hookmetamethod and newcclosure then
+    oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+        local method = getnamecallmethod()
+        if (method == "FireServer" or method == "fireServer") and isRecording then
+            if self == TowerAdd then handleFireServer(self, "Place", ...)
+            elseif self == TowerUpgrade then handleFireServer(self, "Upgrade", ...)
+            elseif self == TowerSell then handleFireServer(self, "Sell", ...)
+            end
+        end
+        return oldNamecall(self, ...)
+    end))
+    hookSuccess = true
+    queueLog("Hook: hookmetamethod aktif")
+elseif hookfunction and newcclosure and getrawmetatable then
+    local mt = getrawmetatable(game)
+    oldNamecall = mt.__namecall
+    setreadonly(mt, false)
+    mt.__namecall = newcclosure(function(self, ...)
+        local method = getnamecallmethod()
+        if (method == "FireServer" or method == "fireServer") and isRecording then
+            if self == TowerAdd then handleFireServer(self, "Place", ...)
+            elseif self == TowerUpgrade then handleFireServer(self, "Upgrade", ...)
+            elseif self == TowerSell then handleFireServer(self, "Sell", ...)
+            end
+        end
+        return oldNamecall(self, ...)
+    end)
+    setreadonly(mt, true)
+    hookSuccess = true
+    queueLog("Hook: getrawmetatable aktif")
+end
+
+if not hookSuccess then
+    local remotes = {
+        { remote = TowerAdd,     actionType = "Place" },
+        { remote = TowerUpgrade, actionType = "Upgrade" },
+        { remote = TowerSell,    actionType = "Sell" },
+    }
+    for _, entry in ipairs(remotes) do
+        local rawFire = entry.remote.FireServer
+        entry.remote.FireServer = function(self, ...)
+            if isRecording then handleFireServer(self, entry.actionType, ...) end
+            return rawFire(self, ...)
+        end
+    end
+    queueLog("WARN: Pakai fallback hook")
+end
+
+-- Hook TAMBAHAN: saat TIDAK recording, kita juga mau tau Id↔placeIndex untuk MAPPING
+-- dengan cara menangkap respon server saat recording.
+-- (Dilakukan dengan OnClientEvent di atas, tapi hanya bermanfaat jika kita tau
+--  urutan Place saat record.)
+
+-- --------------------------------------------------------------------
+-- PLAYBACK
+-- --------------------------------------------------------------------
+local MIN_INTERVAL = 0.2
+
+local remoteByName = {
+    ["TowerAdd"] = TowerAdd,
+    ["TowerUpgrade"] = TowerUpgrade,
+    ["TowerSell"] = TowerSell,
+}
+
+local function waitForPlaceResponse(timeout)
+    timeout = timeout or 3
+
+    -- Cek pending dulu (kalau server balas duluan)
+    if #pendingPlaceResponses > 0 then
+        return table.remove(pendingPlaceResponses, 1)
+    end
+
+    local w = {resolved = false, id = nil, unitId = nil}
+    table.insert(placeResponseWaiters, w)
+
+    local t0 = os.clock()
+    while not w.resolved and (os.clock() - t0) < timeout do
+        task.wait(0.05)
+    end
+
+    if not w.resolved then
+        -- Timeout, hapus waiter
+        for i, x in ipairs(placeResponseWaiters) do
+            if x == w then table.remove(placeResponseWaiters, i) break end
+        end
+        return nil
+    end
+    return w
+end
+
+local function playMacro()
+    if isPlaying then return end
+    if #recordedActions == 0 then
+        queueLog("ERROR: Tidak ada data rekam!")
+        return
+    end
+
+    isPlaying = true
+    StatusLabel.Text = "Status: PLAYING..."
+    StatusLabel.TextColor3 = Color3.fromRGB(50, 255, 50)
+    queueLog(string.format("PLAYBACK STARTED: %d aksi", #recordedActions))
+
+    task.spawn(function()
+        -- Reset state playback
+        newServerIdByPlaceIndex = {}
+        pendingPlaceResponses = {}
+        placeResponseWaiters = {}
+
+        -- PENTING: Restart counter place supaya konsisten
+        local playPlaceCounter = 0
+
+        local playStartTime = os.clock()
+        local lastFire = 0
+
+        for index, action in ipairs(recordedActions) do
+            if not isPlaying then break end
+
+            -- Timing
+            local targetTime = action.time
+            local currentElapsed = os.clock() - playStartTime
+            local waitDuration = targetTime - currentElapsed
+            if waitDuration > 0 then task.wait(waitDuration) end
+
+            local sinceLast = os.clock() - lastFire
+            if sinceLast < MIN_INTERVAL then task.wait(MIN_INTERVAL - sinceLast) end
+
+            if not isPlaying then break end
+
+            local remote = remoteByName[action.remoteName] or action.remote
+            local fireArgs = copyArgs(action.args, action.argCount)
+
+            local rawFn = rawFireServer[remote] or remote.FireServer
+
+            if action.actionType == "Place" then
+                playPlaceCounter = playPlaceCounter + 1
+                local myPlaceIndex = playPlaceCounter
+
+                local sentUnitId
+                if type(fireArgs[1]) == "table" and fireArgs[1].UnitId then
+                    sentUnitId = fireArgs[1].UnitId
+                end
+
+                local ok, err = pcall(function()
+                    rawFn(remote, table.unpack(fireArgs, 1, action.argCount))
+                end)
+
+                if ok then
+                    queueLog(string.format("PLAY [%d/%d] PLACE #%d UnitId=%s",
+                        index, #recordedActions, myPlaceIndex, shortId(sentUnitId)))
+
+                    local resp = waitForPlaceResponse(3)
+                    if resp and resp.id then
+                        newServerIdByPlaceIndex[myPlaceIndex] = resp.id
+                        queueLog(string.format("   ← server Id: %s", shortId(resp.id)))
+                    else
+                        queueLog(string.format("   ⚠ tidak ada respon server (timeout)"))
+                    end
+                else
+                    queueLog(string.format("FAILED [%d] PLACE: %s", index, tostring(err)))
+                end
+
+            elseif action.actionType == "Upgrade" or action.actionType == "Sell" then
+                -- Ganti Id: pakai newServerIdByPlaceIndex berdasar placeIndex
+                local pIdx = action.placeIndex
+
+                if type(fireArgs[1]) == "table" and fireArgs[1].Id then
+                    local newId = pIdx and newServerIdByPlaceIndex[pIdx]
+                    if newId then
+                        local oldId = fireArgs[1].Id
+                        fireArgs[1].Id = newId
+                        queueLog(string.format("   ↪ remap Id %s -> %s (place #%d)",
+                            shortId(oldId), shortId(newId), pIdx))
+                    else
+                        queueLog(string.format("   ⚠ tidak ada Id baru untuk place #%s (aksi dilewati)", tostring(pIdx or "?")))
+                        goto continue
+                    end
+                end
+
+                local ok, err = pcall(function()
+                    rawFn(remote, table.unpack(fireArgs, 1, action.argCount))
+                end)
+
+                if ok then
+                    queueLog(string.format("PLAY [%d/%d] %s: %s",
+                        index, #recordedActions, getLabel(action.actionType),
+                        describeArg(fireArgs[1])))
+                else
+                    queueLog(string.format("FAILED [%d] %s: %s",
+                        index, getLabel(action.actionType), tostring(err)))
+                end
+            end
+
+            ::continue::
+            lastFire = os.clock()
+        end
+
+        isPlaying = false
+        StatusLabel.Text = "Status: IDLE"
+        StatusLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
+        queueLog("PLAYBACK FINISHED")
+    end)
+end
+
+-- --------------------------------------------------------------------
+-- BUTTONS
+-- --------------------------------------------------------------------
+RecordBtn.MouseButton1Click:Connect(function()
+    if isPlaying then return end
+    if not isRecording then
+        isRecording = true
+        recordedActions = {}
+        recordingStartTime = os.clock()
+        placeCounter = 0
+        serverIdToPlaceIndex = {}
+        newServerIdByPlaceIndex = {}
+
+        for _, child in ipairs(LogFrame:GetChildren()) do
+            if child:IsA("TextLabel") then child:Destroy() end
+        end
+
+        RecordBtn.Text = "STOP"
+        RecordBtn.BackgroundColor3 = Color3.fromRGB(230, 80, 30)
+        StatusLabel.Text = "Status: RECORDING..."
+        StatusLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
+        queueLog("RECORDING STARTED")
+    else
+        isRecording = false
+        RecordBtn.Text = "RECORD"
+        RecordBtn.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
+        StatusLabel.Text = "Status: IDLE"
+        StatusLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
+        queueLog(string.format("RECORDING STOPPED: %d aksi", #recordedActions))
+    end
+end)
+
+PlayBtn.MouseButton1Click:Connect(function()
+    if isRecording then
+        queueLog("WARNING: Stop Record dulu!")
+        return
+    end
+    playMacro()
+end)
+
+queueLog("System initialized - With Id Mapping via Place Index")
