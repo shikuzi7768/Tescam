@@ -1,9 +1,9 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
-local CoreGui = game:GetService("CoreGui")
 local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
 
+-- [FIX 1] Menggunakan WaitForChild dengan aman
 local NetworkRoot = ReplicatedStorage:WaitForChild("ModuleLoader")
     :WaitForChild("Shared")
     :WaitForChild("Network")
@@ -25,35 +25,21 @@ local isPlaying = false
 local isMinimized = false
 local recordingStartTime = 0
 
--- --------------------------------------------------------------------
--- TRACKING ID MAPPING
--- --------------------------------------------------------------------
--- Saat RECORD:
---   placeIndexToUnitId[1] = "84e788a1-..."   -- place ke-1 kirim UnitId ini
---   serverIdToPlaceIndex["a03c1eed-..."] = 1 -- server balas dgn Id ini untuk place ke-1
---
--- Saat PLAYBACK:
---   newServerIdByPlaceIndex[1] = "70755aee-..."  -- place ke-1 dapat Id baru ini
--- --------------------------------------------------------------------
-local placeCounter = 0                          -- counter Place saat RECORD
-local serverIdToPlaceIndex = {}                 -- Id server -> place index (RECORD)
-local lastPlaceServerId = nil                   -- Id server dari Place terakhir (RECORD)
-local newServerIdByPlaceIndex = {}              -- place index -> Id baru (PLAYBACK)
+local placeCounter = 0
+local serverIdToPlaceIndex = {}
+local lastPlaceServerId = nil
+local newServerIdByPlaceIndex = {}
 
--- Queue waiter untuk Place baru saat playback
-local placeResponseWaiters = {}                 -- {cb = function, resolved = false}
-local pendingPlaceResponses = {}                -- balasan server yang belum di-consume
+local placeResponseWaiters = {}
+local pendingPlaceResponses = {}
 
 -- --------------------------------------------------------------------
--- UI
+-- UI (Dipindahkan ke PlayerGui agar lebih aman)
 -- --------------------------------------------------------------------
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "TowerMacroUI"
 ScreenGui.ResetOnSpawn = false
-pcall(function() ScreenGui.Parent = CoreGui end)
-if not ScreenGui.Parent then
-    ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
-end
+ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui") -- [FIX 2] Jangan pakai CoreGui
 
 local MainFrame = Instance.new("Frame")
 MainFrame.Size = UDim2.new(0, 340, 0, 310)
@@ -200,7 +186,7 @@ end
 RunService.Heartbeat:Connect(processLogQueue)
 
 -- --------------------------------------------------------------------
--- LISTENER: Server -> Client (TowerAdd) untuk dapat Id server
+-- LISTENER: Server -> Client
 -- --------------------------------------------------------------------
 TowerAdd.OnClientEvent:Connect(function(...)
     local args = {...}
@@ -217,14 +203,12 @@ TowerAdd.OnClientEvent:Connect(function(...)
     end
     if not id then return end
 
-    -- Beritahu waiter playback (jika ada)
     if #placeResponseWaiters > 0 then
         local w = table.remove(placeResponseWaiters, 1)
         w.resolved = true
         w.id = id
         w.unitId = unitId
     else
-        -- Kalau tidak ada waiter, simpan ke pending (untuk race condition)
         table.insert(pendingPlaceResponses, {id = id, unitId = unitId})
     end
 end)
@@ -276,7 +260,7 @@ local function shortId(id)
 end
 
 -- --------------------------------------------------------------------
--- HOOK RECORD
+-- HOOK RECORD (Direct Hook yang Lebih Stabil)
 -- --------------------------------------------------------------------
 local function recordAction(actionType, remote, packedArgs, argCount)
     if not isRecording then return end
@@ -292,7 +276,6 @@ local function recordAction(actionType, remote, packedArgs, argCount)
     }
 
     if actionType == "Place" then
-        -- Catat UnitId untuk place ini
         local uid
         if type(storedArgs[1]) == "table" and storedArgs[1].UnitId then
             uid = storedArgs[1].UnitId
@@ -302,9 +285,7 @@ local function recordAction(actionType, remote, packedArgs, argCount)
         entry.unitId = uid
         queueLog(string.format("REC [%d] PLACE #%d UnitId=%s [t=%.2f]",
             #recordedActions, placeCounter, shortId(uid), elapsedTime))
-
     elseif actionType == "Upgrade" or actionType == "Sell" then
-        -- Cari placeIndex dari Id server yang kita kirim
         local oldId
         if type(storedArgs[1]) == "table" and storedArgs[1].Id then
             oldId = storedArgs[1].Id
@@ -326,61 +307,24 @@ local function handleFireServer(remote, actionType, ...)
     recordAction(actionType, remote, packed, n)
 end
 
+-- [FIX 3] Langsung bungkus fungsi FireServer tanpa hookmetamethod
 local hookSuccess = false
-local oldNamecall
-
-if hookmetamethod and newcclosure then
-    oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
-        local method = getnamecallmethod()
-        if (method == "FireServer" or method == "fireServer") and isRecording then
-            if self == TowerAdd then handleFireServer(self, "Place", ...)
-            elseif self == TowerUpgrade then handleFireServer(self, "Upgrade", ...)
-            elseif self == TowerSell then handleFireServer(self, "Sell", ...)
-            end
+local remotesToHook = {
+    { remote = TowerAdd,     actionType = "Place" },
+    { remote = TowerUpgrade, actionType = "Upgrade" },
+    { remote = TowerSell,    actionType = "Sell" },
+}
+for _, entry in ipairs(remotesToHook) do
+    local rawFire = entry.remote.FireServer
+    entry.remote.FireServer = function(self, ...)
+        if isRecording then 
+            handleFireServer(self, entry.actionType, ...) 
         end
-        return oldNamecall(self, ...)
-    end))
-    hookSuccess = true
-    queueLog("Hook: hookmetamethod aktif")
-elseif hookfunction and newcclosure and getrawmetatable then
-    local mt = getrawmetatable(game)
-    oldNamecall = mt.__namecall
-    setreadonly(mt, false)
-    mt.__namecall = newcclosure(function(self, ...)
-        local method = getnamecallmethod()
-        if (method == "FireServer" or method == "fireServer") and isRecording then
-            if self == TowerAdd then handleFireServer(self, "Place", ...)
-            elseif self == TowerUpgrade then handleFireServer(self, "Upgrade", ...)
-            elseif self == TowerSell then handleFireServer(self, "Sell", ...)
-            end
-        end
-        return oldNamecall(self, ...)
-    end)
-    setreadonly(mt, true)
-    hookSuccess = true
-    queueLog("Hook: getrawmetatable aktif")
-end
-
-if not hookSuccess then
-    local remotes = {
-        { remote = TowerAdd,     actionType = "Place" },
-        { remote = TowerUpgrade, actionType = "Upgrade" },
-        { remote = TowerSell,    actionType = "Sell" },
-    }
-    for _, entry in ipairs(remotes) do
-        local rawFire = entry.remote.FireServer
-        entry.remote.FireServer = function(self, ...)
-            if isRecording then handleFireServer(self, entry.actionType, ...) end
-            return rawFire(self, ...)
-        end
+        return rawFire(self, ...)
     end
-    queueLog("WARN: Pakai fallback hook")
 end
-
--- Hook TAMBAHAN: saat TIDAK recording, kita juga mau tau Id↔placeIndex untuk MAPPING
--- dengan cara menangkap respon server saat recording.
--- (Dilakukan dengan OnClientEvent di atas, tapi hanya bermanfaat jika kita tau
---  urutan Place saat record.)
+hookSuccess = true
+queueLog("Hook: Direct FireServer aktif")
 
 -- --------------------------------------------------------------------
 -- PLAYBACK
@@ -396,7 +340,6 @@ local remoteByName = {
 local function waitForPlaceResponse(timeout)
     timeout = timeout or 3
 
-    -- Cek pending dulu (kalau server balas duluan)
     if #pendingPlaceResponses > 0 then
         return table.remove(pendingPlaceResponses, 1)
     end
@@ -410,7 +353,6 @@ local function waitForPlaceResponse(timeout)
     end
 
     if not w.resolved then
-        -- Timeout, hapus waiter
         for i, x in ipairs(placeResponseWaiters) do
             if x == w then table.remove(placeResponseWaiters, i) break end
         end
@@ -432,21 +374,17 @@ local function playMacro()
     queueLog(string.format("PLAYBACK STARTED: %d aksi", #recordedActions))
 
     task.spawn(function()
-        -- Reset state playback
         newServerIdByPlaceIndex = {}
         pendingPlaceResponses = {}
         placeResponseWaiters = {}
 
-        -- PENTING: Restart counter place supaya konsisten
         local playPlaceCounter = 0
-
         local playStartTime = os.clock()
         local lastFire = 0
 
         for index, action in ipairs(recordedActions) do
             if not isPlaying then break end
 
-            -- Timing
             local targetTime = action.time
             local currentElapsed = os.clock() - playStartTime
             local waitDuration = targetTime - currentElapsed
@@ -460,6 +398,7 @@ local function playMacro()
             local remote = remoteByName[action.remoteName] or action.remote
             local fireArgs = copyArgs(action.args, action.argCount)
 
+            -- Gunakan fungsi asli yang disimpan di awal
             local rawFn = rawFireServer[remote] or remote.FireServer
 
             if action.actionType == "Place" then
@@ -491,7 +430,6 @@ local function playMacro()
                 end
 
             elseif action.actionType == "Upgrade" or action.actionType == "Sell" then
-                -- Ganti Id: pakai newServerIdByPlaceIndex berdasar placeIndex
                 local pIdx = action.placeIndex
 
                 if type(fireArgs[1]) == "table" and fireArgs[1].Id then
