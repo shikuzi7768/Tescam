@@ -1,527 +1,558 @@
 --//============================================================
---// ROBLOX MACRO - Tower Defense v5
---// Fix: verbose logging + robust tower detection
+--// ROBLOX MACRO - Dynamic Game-Speed Adaptive Interceptor
+--// Fitur: Automatic Game Speed Sync + Multi-Profile + Auto Play
 --//============================================================
 
-local Players            = game:GetService("Players")
-local ReplicatedStorage  = game:GetService("ReplicatedStorage")
+local Players           = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService       = game:GetService("HttpService")
 
-local RemoteFunctions = ReplicatedStorage:WaitForChild("RemoteFunctions")
-local PlaceTowerRF    = RemoteFunctions:WaitForChild("PlaceTower")
-local SellTowerRF     = RemoteFunctions:WaitForChild("SellTower")
-local UpgradeTowerRF  = RemoteFunctions:WaitForChild("UpgradeTower")
+local LocalPlayer = Players.LocalPlayer
 
---//========== CONFIG ==========
-local DEBUG_MODE    = true    -- log semua InvokeServer ke 3 remote
-local VERBOSE_HOOK  = true    -- log tiap langkah di recording block (buat diagnosa)
-local HOOK_DISABLED = false
+-- Target RemoteFunctions & RemoteEvents
+local TARGET_REMOTES = {
+    ["PlaceTower"]    = true,
+    ["UpgradeTower"]  = true,
+    ["SellTower"]     = true,
+    ["CanPlaceTower"] = true
+}
 
---//========== STATE ==========
-local recording       = false
-local playing         = false
-local recordedActions = {}
-local recordStartTick = 0
-local playStartTick   = 0
+local recording          = false
+local playing            = false
+local autoPlayEnabled    = false
+local recordedActions    = {}
+local playbackSpeed      = 1.0 -- Speed Multiplier Tambahan Makro (1x, 1.25x, dst)
+local currentGameSpeed   = 1.0 -- Speed Game (1.0x, 1.5x, 2.0x)
+local currentMacroName   = "Makro 1"
 
---//========== LOGGER ==========
+-- Variable untuk tracking waktu berbasis game speed
+local recordGameTime     = 0
+local lastRecordTick     = 0
+
 local function log(tag, msg)
     print(string.format("[%s][MACRO][%s] %s", os.date("%H:%M:%S"), tag, msg))
 end
 
---//========== HELPER: CFrame tower — support ALL instance types ==========
-local function getTowerCFrame(tower)
-    if not tower then return nil end
+-- Format nama file dari nama profil
+local function GetFileName(profileName)
+    local cleanName = string.gsub(profileName, "[%s%c%p]", "_")
+    return "TD_Macro_" .. cleanName .. ".json"
+end
 
-    -- 1. BasePart langsung
-    if tower:IsA("BasePart") then
-        return tower.CFrame
-    end
-
-    -- 2. Model dengan PrimaryPart
-    if tower:IsA("Model") then
-        if tower.PrimaryPart then
-            return tower.PrimaryPart.CFrame
-        end
-        local ok, pivot = pcall(function() return tower:GetPivot() end)
-        if ok and pivot then
-            return pivot
+--//========== MENCARI REMOTE DENGAN NAMA ==========
+local function GetRemoteByName(name)
+    for _, v in ipairs(game:GetDescendants()) do
+        if v.Name == name and (v:IsA("RemoteFunction") or v:IsA("RemoteEvent")) then
+            return v
         end
     end
-
-    -- 3. Model / Folder / apapun: cari BasePart descendant
-    for _, d in ipairs(tower:GetDescendants()) do
-        if d:IsA("BasePart") then
-            return d.CFrame
-        end
-    end
-
     return nil
 end
 
---//========== HELPER: Cari tower saat playback ==========
-local function findTowerInstance(name, targetCFrame)
-    if not targetCFrame then return nil end
-    local best, bestDist = nil, math.huge
+--//========== PENGATUR KECEPATAN GAME ==========
+local function SetGameSpeed(speed)
+    currentGameSpeed = speed
     pcall(function()
-        for _, obj in ipairs(getnilinstances()) do
-            if obj.Name == name then
-                local pos = getTowerCFrame(obj)
-                if pos then
-                    local dist = (pos.Position - targetCFrame.Position).Magnitude
-                    if dist < bestDist then
-                        best, bestDist = obj, dist
-                    end
+        local speedRemote = ReplicatedStorage:FindFirstChild("RemoteEvents") and ReplicatedStorage.RemoteEvents:FindFirstChild("SetGameSpeed")
+        if speedRemote then
+            speedRemote:FireServer(speed)
+            log("GAME", string.format("⚡ Kecepatan game diatur ke x%.1f", speed))
+        end
+    end)
+end
+
+--//========== SERIALISASI DATA ==========
+local function SerializeArgs(args)
+    local serialized = {}
+    for i, v in ipairs(args) do
+        if typeof(v) == "Instance" then
+            serialized[i] = {
+                __type = "Instance",
+                path   = v:GetFullName(),
+                name   = v.Name
+            }
+        elseif type(v) == "table" then
+            local tCopy = {}
+            for k, val in pairs(v) do
+                if typeof(val) == "Instance" then
+                    tCopy[k] = { __type = "Instance", path = val:GetFullName(), name = val.Name }
+                else
+                    tCopy[k] = val
                 end
             end
+            serialized[i] = tCopy
+        else
+            serialized[i] = v
         end
-    end)
-    if best and bestDist <= 15 then
-        return best, bestDist
     end
-    return nil
+    return serialized
 end
 
---//========== HOOK ==========
-if not HOOK_DISABLED then
-    local oldNamecall
-    local ok_hook, err_hook = pcall(function()
-        local mt = getrawmetatable(game)
-        oldNamecall = mt.__namecall
-        if setreadonly then setreadonly(mt, false) end
-
-        mt.__namecall = newcclosure(function(self, ...)
-            local method = getnamecallmethod()
-
-            -- Identifikasi remote
-            local targetName = nil
-            if self == PlaceTowerRF then targetName = "PlaceTower"
-            elseif self == SellTowerRF then targetName = "SellTower"
-            elseif self == UpgradeTowerRF then targetName = "UpgradeTower" end
-
-            -- Semua logic di bawah ini dibungkus pcall
-            -- Supaya error tidak pernah block panggilan asli
-            if targetName and method == "InvokeServer" then
-                pcall(function()
-                    local args = {...}
-
-                    -- DBG: log semua InvokeServer ke target remote
-                    if DEBUG_MODE then
-                        local parts = {}
-                        for i, a in ipairs(args) do
-                            local s = tostring(a)
-                            if #s > 50 then s = s:sub(1, 47) .. "..." end
-                            table.insert(parts, string.format("#%d<%s>=%s",
-                                i, typeof(a), s))
-                        end
-                        log("DBG", string.format("%s:InvokeServer(%s, recording=%s)",
-                            targetName, table.concat(parts, ", "),
-                            tostring(recording)))
-                    end
-
-                    -- Recording logic
-                    if recording then
-                        local t = tick() - recordStartTick
-
-                        if targetName == "PlaceTower" then
-                            local towerName, cframe = args[1], args[2]
-                            if VERBOSE_HOOK then
-                                log("V", string.format(
-                                    "Place: #1 typeof=%s, #2 typeof=%s",
-                                    typeof(towerName), typeof(cframe)))
-                            end
-                            if typeof(cframe) == "CFrame" and type(towerName) == "string" then
-                                table.insert(recordedActions, {
-                                    type = "place", time = t,
-                                    towerName = towerName, cframe = cframe,
-                                })
-                                log("RECORD", string.format(
-                                    "#%d PLACE '%s' @ T=%.3fs | Pos=(%.1f, %.1f, %.1f)",
-                                    #recordedActions, towerName, t,
-                                    cframe.Position.X, cframe.Position.Y, cframe.Position.Z))
-                            else
-                                log("RECORD", "⚠ Place arg tidak valid, skip")
-                            end
-
-                        elseif targetName == "UpgradeTower" or targetName == "SellTower" then
-                            local actionType = (targetName == "UpgradeTower"
-                                and "upgrade" or "sell")
-                            local tower = args[1]
-
-                            if VERBOSE_HOOK then
-                                log("V", string.format(
-                                    "%s: arg count=%d, #1 typeof=%s",
-                                    targetName, #args, typeof(tower)))
-                            end
-
-                            -- Cek Instance — pakai dua cara
-                            local isInstance = typeof(tower) == "Instance"
-                            if not isInstance then
-                                -- Fallback: cek apakah punya property khas Instance
-                                local ok_check = pcall(function()
-                                    local _ = tower.Name
-                                    local _ = tower.ClassName
-                                    isInstance = true
-                                end)
-                            end
-
-                            if isInstance then
-                                local name    = tower.Name
-                                local class   = tower.ClassName
-                                local cf      = getTowerCFrame(tower)
-
-                                if VERBOSE_HOOK then
-                                    log("V", string.format(
-                                        "  Instance OK: Name='%s' Class='%s' CF=%s",
-                                        name, class, tostring(cf ~= nil)))
-                                end
-
-                                if cf then
-                                    table.insert(recordedActions, {
-                                        type = actionType, time = t,
-                                        towerName = name, towerCFrame = cf,
-                                    })
-                                    log("RECORD", string.format(
-                                        "#%d %s '%s' (Class=%s) @ T=%.3fs | Pos=(%.1f, %.1f, %.1f)",
-                                        #recordedActions, string.upper(actionType),
-                                        name, class, t,
-                                        cf.Position.X, cf.Position.Y, cf.Position.Z))
-                                else
-                                    log("RECORD", string.format(
-                                        "⚠ Tidak bisa ambil CFrame dari '%s' (Class=%s)",
-                                        name, class))
-                                end
-                            else
-                                log("RECORD", string.format(
-                                    "⚠ Arg bukan Instance (typeof=%s), skip",
-                                    typeof(tower)))
-                            end
-                        end
-                    end
-                end)  -- end pcall
+local function ResolveInstance(data)
+    if type(data) == "table" and data.__type == "Instance" then
+        local obj = workspace
+        for segment in string.gmatch(data.path, "[^.]+") do
+            if segment ~= "Workspace" and segment ~= "game" then
+                obj = obj:FindFirstChild(segment)
+                if not obj then break end
             end
+        end
+        return obj or workspace:FindFirstChild(data.name, true)
+    end
+    return data
+end
 
-            -- WAJIB: forward ke original namecall
-            return oldNamecall(self, ...)
-        end)
+local function DeserializeArgs(args)
+    local deserialized = {}
+    for i, v in ipairs(args) do
+        if type(v) == "table" then
+            if v.__type == "Instance" then
+                deserialized[i] = ResolveInstance(v)
+            else
+                local tCopy = {}
+                for k, val in pairs(v) do
+                    tCopy[k] = ResolveInstance(v)
+                end
+                deserialized[i] = tCopy
+            end
+        else
+            deserialized[i] = v
+        end
+    end
+    return deserialized
+end
 
-        if setreadonly then setreadonly(mt, true) end
+--//========== SAVE & LOAD MULTI-PROFILE ==========
+local function SaveMacroToFile(name)
+    if #recordedActions == 0 then
+        return log("SAVE", "⚠️ Tidak ada aksi untuk disimpan!")
+    end
+    if not writefile then
+        return log("SAVE", "❌ Executor tidak mendukung writefile!")
+    end
+
+    local fileName = GetFileName(name)
+    local cleanActions = {}
+    for _, act in ipairs(recordedActions) do
+        table.insert(cleanActions, {
+            remoteName = act.remoteName,
+            args       = act.args,
+            gameTime   = act.gameTime
+        })
+    end
+
+    local ok, err = pcall(function()
+        writefile(fileName, HttpService:JSONEncode(cleanActions))
     end)
 
-    if ok_hook then
-        log("INIT", "Hook __namecall terpasang.")
+    if ok then
+        log("SAVE", string.format("💾 Profil '%s' disimpan ke '%s' (%d aksi)", name, fileName, #recordedActions))
     else
-        log("INIT", "❌ HOOK GAGAL: " .. tostring(err_hook))
+        log("SAVE", "❌ Gagal menyimpan: " .. tostring(err))
     end
 end
 
---//========== RECORD / PLAY ==========
-local function startRecord()
-    if playing or recording then return end
-    recordedActions = {}
-    recordStartTick = tick()
-    recording = true
-    log("RECORD", "▶ Recording dimulai.")
-end
-
-local function stopRecord()
-    if not recording then return end
-    recording = false
-    log("RECORD", string.format("⏹ Recording dihentikan. %d aksi.", #recordedActions))
-end
-
-local function stopPlay()
-    if not playing then return end
-    playing = false
-    log("PLAY", "⏹ Playback dihentikan.")
-end
-
--- Format argumen untuk Sell/Upgrade
-local function tryInvoke(remote, action, label)
-    local tower, dist = findTowerInstance(action.towerName, action.towerCFrame)
-    if not tower then
-        return false, string.format("Tower '%s' tidak ditemukan", action.towerName)
+local function LoadMacroFromFile(name)
+    if not readfile or not isfile then
+        return log("LOAD", "❌ Executor tidak mendukung readfile/isfile!")
     end
 
-    local candidates = {
-        { name = "Instance", value = tower },
-        { name = "DebugId",  value = tower:GetDebugId() },
-        { name = "Name",     value = tower.Name },
-    }
-    for _, child in ipairs(tower:GetDescendants()) do
-        if child:IsA("StringValue") then
-            table.insert(candidates, {
-                name = "StrVal:" .. child.Name, value = child.Value,
+    local fileName = GetFileName(name)
+    if not isfile(fileName) then
+        return log("LOAD", "⚠️ File makro '" .. fileName .. "' tidak ditemukan!")
+    end
+
+    local ok, result = pcall(function()
+        return HttpService:JSONEncode(readfile(fileName))
+    end)
+
+    local okParse, parsedData = pcall(function()
+        return HttpService:JSONDecode(readfile(fileName))
+    end)
+
+    if okParse and type(parsedData) == "table" then
+        recordedActions = {}
+        for _, act in ipairs(parsedData) do
+            table.insert(recordedActions, {
+                remote     = GetRemoteByName(act.remoteName),
+                remoteName = act.remoteName,
+                args       = act.args,
+                gameTime   = act.gameTime or act.time or 0 -- kompatibilitas save lama
             })
         end
+        log("LOAD", string.format("📂 Profil '%s' dimuat (%d aksi)", name, #recordedActions))
+        return true
+    else
+        log("LOAD", "❌ Gagal membaca file makro!")
+        return false
     end
-
-    local lastErr
-    for _, cand in ipairs(candidates) do
-        local ok, err = pcall(function() remote:InvokeServer(cand.value) end)
-        if ok then
-            return true, string.format("%s '%s' via %s (dist=%.2f)",
-                label, action.towerName, cand.name, dist)
-        end
-        lastErr = err
-        log("TRY", string.format("  Format %s gagal: %s", cand.name, tostring(err)))
-    end
-    return false, "Semua format gagal. Error terakhir: " .. tostring(lastErr)
 end
 
-local function executeAction(action)
-    if action.type == "place" then
-        PlaceTowerRF:InvokeServer(action.towerName, action.cframe)
-        return true, string.format("PLACE '%s' | (%.1f, %.1f, %.1f)",
-            action.towerName,
-            action.cframe.Position.X, action.cframe.Position.Y, action.cframe.Position.Z)
-    elseif action.type == "upgrade" then
-        return tryInvoke(UpgradeTowerRF, action, "UPGRADE")
-    elseif action.type == "sell" then
-        return tryInvoke(SellTowerRF, action, "SELL")
-    end
-    return false, "Tipe tidak dikenal: " .. tostring(action.type)
-end
-
-local function startPlay()
-    if recording or playing then return end
-    if #recordedActions == 0 then log("PLAY", "Tidak ada aksi.") return end
-    playing = true
-    playStartTick = tick()
-    log("PLAY", string.format("▶ Playback dimulai. %d aksi...", #recordedActions))
-
-    task.spawn(function()
-        for i, action in ipairs(recordedActions) do
-            if not playing then break end
-            local waitTime = action.time - (tick() - playStartTick)
-            if waitTime > 0 then task.wait(waitTime) end
-            if not playing then break end
-
-            local ok, msg = pcall(executeAction, action)
-            if ok and msg then
-                log("PLAY", string.format("[%d/%d] %s", i, #recordedActions, msg))
-            else
-                log("PLAY", string.format("[%d/%d] ❌ GAGAL: %s",
-                    i, #recordedActions, tostring(msg)))
-            end
-        end
-        playing = false
-        log("PLAY", "✅ Playback selesai.")
-    end)
-end
-
---//========== UI ==========
+--//========== UI MACRO ==========
 local function createUI()
     local parent = (gethui and gethui()) or game:GetService("CoreGui")
+    if parent:FindFirstChild("MacroUI") then parent.MacroUI:Destroy() end
+
     local gui = Instance.new("ScreenGui")
     gui.Name = "MacroUI"
     gui.ResetOnSpawn = false
     gui.Parent = parent
 
     local main = Instance.new("Frame")
-    main.Size = UDim2.new(0, 310, 0, 250)
+    main.Size = UDim2.new(0, 300, 0, 280)
     main.Position = UDim2.new(0, 20, 0, 100)
     main.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
-    main.BorderSizePixel = 0
     main.Active = true
     main.Draggable = true
     main.Parent = gui
-    Instance.new("UICorner", main).CornerRadius = UDim.new(0, 10)
 
-    local stroke = Instance.new("UIStroke", main)
-    stroke.Color = Color3.fromRGB(70, 70, 85)
-    stroke.Thickness = 1
+    Instance.new("UICorner", main).CornerRadius = UDim.new(0, 8)
 
     local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(1, 0, 0, 34)
-    title.BackgroundColor3 = Color3.fromRGB(34, 34, 42)
-    title.BorderSizePixel = 0
-    title.Text = "🎮  MACRO v5  •  TD Automation"
-    title.TextColor3 = Color3.fromRGB(235, 235, 235)
-    title.TextSize = 14
+    title.Size = UDim2.new(1, 0, 0, 32)
+    title.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+    title.Text = "⚡ MACRO • Game-Speed Adaptive"
+    title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    title.TextSize = 12
     title.Font = Enum.Font.GothamBold
     title.Parent = main
-    Instance.new("UICorner", title).CornerRadius = UDim.new(0, 10)
+    Instance.new("UICorner", title).CornerRadius = UDim.new(0, 8)
 
     local status = Instance.new("TextLabel")
     status.Size = UDim2.new(1, -20, 0, 18)
-    status.Position = UDim2.new(0, 10, 0, 38)
+    status.Position = UDim2.new(0, 10, 0, 35)
     status.BackgroundTransparency = 1
-    status.TextXAlignment = Enum.TextXAlignment.Left
-    status.TextColor3 = Color3.fromRGB(200, 200, 210)
-    status.TextSize = 12
+    status.TextColor3 = Color3.fromRGB(180, 180, 190)
+    status.TextSize = 11
     status.Font = Enum.Font.Gotham
-    status.Text = "Status: Idle"
+    status.Text = "Status: Ready | Actions: 0"
     status.Parent = main
 
-    local breakdown = Instance.new("TextLabel")
-    breakdown.Size = UDim2.new(1, -20, 0, 16)
-    breakdown.Position = UDim2.new(0, 10, 0, 56)
-    breakdown.BackgroundTransparency = 1
-    breakdown.TextXAlignment = Enum.TextXAlignment.Left
-    breakdown.TextColor3 = Color3.fromRGB(150, 150, 160)
-    breakdown.TextSize = 11
-    breakdown.Font = Enum.Font.Gotham
-    breakdown.Text = "Place: 0  |  Upgrade: 0  |  Sell: 0"
-    breakdown.Parent = main
+    -- Input Nama Makro
+    local nameInput = Instance.new("TextBox")
+    nameInput.Size = UDim2.new(1, -20, 0, 26)
+    nameInput.Position = UDim2.new(0, 10, 0, 56)
+    nameInput.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+    nameInput.Text = currentMacroName
+    nameInput.PlaceholderText = "Masukkan nama makro..."
+    nameInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+    nameInput.Font = Enum.Font.GothamBold
+    nameInput.TextSize = 11
+    nameInput.Parent = main
+    Instance.new("UICorner", nameInput).CornerRadius = UDim.new(0, 5)
 
+    nameInput:GetPropertyChangedSignal("Text"):Connect(function()
+        currentMacroName = nameInput.Text
+    end)
+
+    -- Tombol Record & Play
     local recBtn = Instance.new("TextButton")
-    recBtn.Size = UDim2.new(0.5, -15, 0, 44)
-    recBtn.Position = UDim2.new(0, 10, 0, 80)
-    recBtn.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
-    recBtn.BorderSizePixel = 0
-    recBtn.Text = "⏺  RECORD"
+    recBtn.Size = UDim2.new(0.5, -15, 0, 36)
+    recBtn.Position = UDim2.new(0, 10, 0, 88)
+    recBtn.BackgroundColor3 = Color3.fromRGB(190, 50, 50)
+    recBtn.Text = "⏺ RECORD"
     recBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    recBtn.TextSize = 14
     recBtn.Font = Enum.Font.GothamBold
     recBtn.Parent = main
-    Instance.new("UICorner", recBtn).CornerRadius = UDim.new(0, 8)
+    Instance.new("UICorner", recBtn).CornerRadius = UDim.new(0, 6)
 
     local playBtn = Instance.new("TextButton")
-    playBtn.Size = UDim2.new(0.5, -15, 0, 44)
-    playBtn.Position = UDim2.new(0.5, 5, 0, 80)
-    playBtn.BackgroundColor3 = Color3.fromRGB(55, 165, 95)
-    playBtn.BorderSizePixel = 0
-    playBtn.Text = "▶  PLAY"
+    playBtn.Size = UDim2.new(0.5, -15, 0, 36)
+    playBtn.Position = UDim2.new(0.5, 5, 0, 88)
+    playBtn.BackgroundColor3 = Color3.fromRGB(50, 160, 80)
+    playBtn.Text = "▶ PLAY"
     playBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    playBtn.TextSize = 14
     playBtn.Font = Enum.Font.GothamBold
     playBtn.Parent = main
-    Instance.new("UICorner", playBtn).CornerRadius = UDim.new(0, 8)
+    Instance.new("UICorner", playBtn).CornerRadius = UDim.new(0, 6)
 
+    -- Tombol Save & Load
+    local saveBtn = Instance.new("TextButton")
+    saveBtn.Size = UDim2.new(0.5, -15, 0, 30)
+    saveBtn.Position = UDim2.new(0, 10, 0, 130)
+    saveBtn.BackgroundColor3 = Color3.fromRGB(40, 90, 150)
+    saveBtn.Text = "💾 SAVE PROFILE"
+    saveBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    saveBtn.Font = Enum.Font.GothamBold
+    saveBtn.TextSize = 10
+    saveBtn.Parent = main
+    Instance.new("UICorner", saveBtn).CornerRadius = UDim.new(0, 5)
+
+    local loadBtn = Instance.new("TextButton")
+    loadBtn.Size = UDim2.new(0.5, -15, 0, 30)
+    loadBtn.Position = UDim2.new(0.5, 5, 0, 130)
+    loadBtn.BackgroundColor3 = Color3.fromRGB(140, 90, 30)
+    loadBtn.Text = "📂 LOAD PROFILE"
+    loadBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    loadBtn.Font = Enum.Font.GothamBold
+    loadBtn.TextSize = 10
+    loadBtn.Parent = main
+    Instance.new("UICorner", loadBtn).CornerRadius = UDim.new(0, 5)
+
+    -- Tombol Auto Play Toggle
+    local autoPlayBtn = Instance.new("TextButton")
+    autoPlayBtn.Size = UDim2.new(1, -20, 0, 32)
+    autoPlayBtn.Position = UDim2.new(0, 10, 0, 166)
+    autoPlayBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 75)
+    autoPlayBtn.Text = "🤖 AUTO PLAY: OFF"
+    autoPlayBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+    autoPlayBtn.Font = Enum.Font.GothamBold
+    autoPlayBtn.TextSize = 11
+    autoPlayBtn.Parent = main
+    Instance.new("UICorner", autoPlayBtn).CornerRadius = UDim.new(0, 6)
+
+    -- Speed Controls
+    local speedBtn = Instance.new("TextButton")
+    speedBtn.Size = UDim2.new(0.5, -15, 0, 26)
+    speedBtn.Position = UDim2.new(0, 10, 0, 204)
+    speedBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
+    speedBtn.Text = "🚀 Mult: 1.0x"
+    speedBtn.TextColor3 = Color3.fromRGB(220, 220, 230)
+    speedBtn.Font = Enum.Font.GothamBold
+    speedBtn.TextSize = 10
+    speedBtn.Parent = main
+    Instance.new("UICorner", speedBtn).CornerRadius = UDim.new(0, 5)
+
+    local gameSpeedBtn = Instance.new("TextButton")
+    gameSpeedBtn.Size = UDim2.new(0.5, -15, 0, 26)
+    gameSpeedBtn.Position = UDim2.new(0.5, 5, 0, 204)
+    gameSpeedBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
+    gameSpeedBtn.Text = "🎮 Game: " .. tostring(currentGameSpeed) .. "x"
+    gameSpeedBtn.TextColor3 = Color3.fromRGB(220, 220, 230)
+    gameSpeedBtn.Font = Enum.Font.GothamBold
+    gameSpeedBtn.TextSize = 10
+    gameSpeedBtn.Parent = main
+    Instance.new("UICorner", gameSpeedBtn).CornerRadius = UDim.new(0, 5)
+
+    -- Tombol Clear
     local clearBtn = Instance.new("TextButton")
-    clearBtn.Size = UDim2.new(1, -20, 0, 26)
-    clearBtn.Position = UDim2.new(0, 10, 0, 132)
+    clearBtn.Size = UDim2.new(1, -20, 0, 22)
+    clearBtn.Position = UDim2.new(0, 10, 0, 236)
     clearBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
-    clearBtn.BorderSizePixel = 0
-    clearBtn.Text = "🗑  Clear Records"
-    clearBtn.TextColor3 = Color3.fromRGB(220, 220, 220)
-    clearBtn.TextSize = 11
+    clearBtn.Text = "🗑 Clear Records"
+    clearBtn.TextColor3 = Color3.fromRGB(180, 180, 180)
     clearBtn.Font = Enum.Font.Gotham
+    clearBtn.TextSize = 10
     clearBtn.Parent = main
-    Instance.new("UICorner", clearBtn).CornerRadius = UDim.new(0, 6)
+    Instance.new("UICorner", clearBtn).CornerRadius = UDim.new(0, 5)
 
-    local dumpBtn = Instance.new("TextButton")
-    dumpBtn.Size = UDim2.new(1, -20, 0, 26)
-    dumpBtn.Position = UDim2.new(0, 10, 0, 162)
-    dumpBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
-    dumpBtn.BorderSizePixel = 0
-    dumpBtn.Text = "📋  Dump Records ke Console"
-    dumpBtn.TextColor3 = Color3.fromRGB(220, 220, 220)
-    dumpBtn.TextSize = 11
-    dumpBtn.Font = Enum.Font.Gotham
-    dumpBtn.Parent = main
-    Instance.new("UICorner", dumpBtn).CornerRadius = UDim.new(0, 6)
+    local function updateStatus()
+        local txt = "Idle"
+        if recording then txt = "🔴 Recording"
+        elseif playing then txt = "🟢 Playing" end
+        status.Text = string.format("Status: %s | Actions: %d", txt, #recordedActions)
+        gameSpeedBtn.Text = string.format("🎮 Game: %.1fx", currentGameSpeed)
+    end
 
-    -- BARU: Inspect tower di bawah kursor
-    local inspectBtn = Instance.new("TextButton")
-    inspectBtn.Size = UDim2.new(1, -20, 0, 26)
-    inspectBtn.Position = UDim2.new(0, 10, 0, 192)
-    inspectBtn.BackgroundColor3 = Color3.fromRGB(60, 50, 80)
-    inspectBtn.BorderSizePixel = 0
-    inspectBtn.Text = "🔍  Inspect Tower di Bawah Kursor"
-    inspectBtn.TextColor3 = Color3.fromRGB(220, 220, 220)
-    inspectBtn.TextSize = 11
-    inspectBtn.Font = Enum.Font.Gotham
-    inspectBtn.Parent = main
-    Instance.new("UICorner", inspectBtn).CornerRadius = UDim.new(0, 6)
+    --//========== SISTEM PLAYBACK ADAPTIF GAME SPEED ==========
+    local function StartPlayback()
+        if recording or #recordedActions == 0 then return end
+        playing = true
+        playBtn.Text = "⏹ STOP"
+        playBtn.BackgroundColor3 = Color3.fromRGB(110, 30, 30)
+        updateStatus()
 
-    local function refresh()
-        local s = "Idle"
-        if recording then s = "🔴 Recording"
-        elseif playing then s = "🟢 Playing" end
-        local cp, cu, cs = 0, 0, 0
-        for _, a in ipairs(recordedActions) do
-            if a.type == "place" then cp = cp + 1
-            elseif a.type == "upgrade" then cu = cu + 1
-            elseif a.type == "sell" then cs = cs + 1 end
-        end
-        status.Text = string.format("Status: %s  |  Total: %d", s, #recordedActions)
-        breakdown.Text = string.format("Place: %d  |  Upgrade: %d  |  Sell: %d", cp, cu, cs)
+        task.spawn(function()
+            log("PLAY", string.format("▶ Memulai '%s' [Kecepatan Game Aktif: x%.1f]...", currentMacroName, currentGameSpeed))
+
+            local playElapsedGameTime = 0
+            local lastPlayTick = tick()
+
+            for i, act in ipairs(recordedActions) do
+                if not playing then break end
+
+                local targetGameTime = act.gameTime
+
+                -- Loop waktu presisi yang fleksibel terhadap perubahan Game Speed secara real-time
+                while playing do
+                    local now = tick()
+                    local dt = now - lastPlayTick
+                    lastPlayTick = now
+
+                    -- Waktu berjalan lebih cepat sesuai Game Speed & Multiplier Makro
+                    local effectiveSpeed = currentGameSpeed * playbackSpeed
+                    playElapsedGameTime = playElapsedGameTime + (dt * effectiveSpeed)
+
+                    local remainingGameTime = targetGameTime - playElapsedGameTime
+                    if remainingGameTime <= 0 then
+                        break
+                    end
+
+                    -- Jeda kecil (0.02s) agar perubahan game speed di tengah-tengah langsung terdeteksi
+                    local realWait = remainingGameTime / effectiveSpeed
+                    task.wait(math.min(realWait, 0.03))
+                end
+
+                if not playing then break end
+
+                -- Eksekusi aksi
+                task.spawn(function()
+                    pcall(function()
+                        local remoteObj = act.remote or GetRemoteByName(act.remoteName)
+                        if remoteObj then
+                            local realArgs = DeserializeArgs(act.args)
+                            remoteObj:InvokeServer(unpack(realArgs))
+                        end
+                    end)
+                end)
+
+                log("PLAY", string.format("[%d/%d] Executed: %s (T_game=%.2fs)", i, #recordedActions, act.remoteName, targetGameTime))
+            end
+
+            playing = false
+            playBtn.Text = "▶ PLAY"
+            playBtn.BackgroundColor3 = Color3.fromRGB(50, 160, 80)
+            updateStatus()
+            log("PLAY", "✅ Playback Adaptif Selesai.")
+        end)
     end
 
     recBtn.MouseButton1Click:Connect(function()
         if recording then
-            stopRecord()
-            recBtn.Text = "⏺  RECORD"
-            recBtn.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
+            recording = false
+            recBtn.Text = "⏺ RECORD"
+            recBtn.BackgroundColor3 = Color3.fromRGB(190, 50, 50)
+            log("RECORD", string.format("⏹ Selesai. Total %d aksi terekam.", #recordedActions))
         else
-            startRecord()
-            recBtn.Text = "⏹  STOP"
-            recBtn.BackgroundColor3 = Color3.fromRGB(120, 30, 30)
+            if playing then return end
+            recordedActions = {}
+            recordGameTime  = 0
+            lastRecordTick  = tick()
+            recording       = true
+            recBtn.Text     = "⏹ STOP"
+            recBtn.BackgroundColor3 = Color3.fromRGB(110, 30, 30)
+            log("RECORD", "▶ Recording dimulai (Merekam waktu berbasis Game Speed)...")
         end
-        refresh()
+        updateStatus()
     end)
 
     playBtn.MouseButton1Click:Connect(function()
-        if playing then stopPlay() else startPlay() end
-        refresh()
+        if playing then
+            playing = false
+            playBtn.Text = "▶ PLAY"
+            playBtn.BackgroundColor3 = Color3.fromRGB(50, 160, 80)
+            log("PLAY", "⏹ Playback dihentikan.")
+            updateStatus()
+        else
+            StartPlayback()
+        end
+    end)
+
+    autoPlayBtn.MouseButton1Click:Connect(function()
+        autoPlayEnabled = not autoPlayEnabled
+        if autoPlayEnabled then
+            autoPlayBtn.Text = "🤖 AUTO PLAY: ON"
+            autoPlayBtn.BackgroundColor3 = Color3.fromRGB(40, 140, 70)
+            autoPlayBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+            log("AUTOPLAY", "✅ Auto Play diaktifkan.")
+            
+            if #recordedActions == 0 then
+                LoadMacroFromFile(currentMacroName)
+                updateStatus()
+            end
+            if not playing and #recordedActions > 0 then
+                StartPlayback()
+            end
+        else
+            autoPlayBtn.Text = "🤖 AUTO PLAY: OFF"
+            autoPlayBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 75)
+            autoPlayBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+            log("AUTOPLAY", "⏹ Auto Play dimatikan.")
+        end
+    end)
+
+    saveBtn.MouseButton1Click:Connect(function()
+        SaveMacroToFile(currentMacroName)
+    end)
+
+    loadBtn.MouseButton1Click:Connect(function()
+        if LoadMacroFromFile(currentMacroName) then
+            updateStatus()
+            if autoPlayEnabled and not playing then
+                StartPlayback()
+            end
+        end
+    end)
+
+    local macroSpeeds = {1.0, 1.25, 1.5, 2.0}
+    local macroSpeedIdx = 1
+    speedBtn.MouseButton1Click:Connect(function()
+        macroSpeedIdx = (macroSpeedIdx % #macroSpeeds) + 1
+        playbackSpeed = macroSpeeds[macroSpeedIdx]
+        speedBtn.Text = string.format("🚀 Mult: %.2fx", playbackSpeed)
+    end)
+
+    local gameSpeeds = {1.0, 1.5, 2.0}
+    local gameSpeedIdx = 1
+    gameSpeedBtn.MouseButton1Click:Connect(function()
+        gameSpeedIdx = (gameSpeedIdx % #gameSpeeds) + 1
+        local newSpd = gameSpeeds[gameSpeedIdx]
+        SetGameSpeed(newSpd)
+        updateStatus()
     end)
 
     clearBtn.MouseButton1Click:Connect(function()
         if recording or playing then return end
         recordedActions = {}
-        log("UI", "Records dibersihkan.")
-        refresh()
-    end)
-
-    dumpBtn.MouseButton1Click:Connect(function()
-        log("DUMP", string.format("Total %d aksi:", #recordedActions))
-        for i, a in ipairs(recordedActions) do
-            if a.type == "place" then
-                log("DUMP", string.format("  [%d] PLACE '%s' @ %.3fs",
-                    i, a.towerName, a.time))
-            else
-                log("DUMP", string.format("  [%d] %s '%s' @ %.3fs",
-                    i, string.upper(a.type), a.towerName, a.time))
-            end
-        end
-    end)
-
-    -- Inspect: klik tower di game, lihat struktur lengkapnya
-    inspectBtn.MouseButton1Click:Connect(function()
-        log("INSPECT", "Klik pada tower di game...")
-        local UIS = game:GetService("UserInputService")
-        local mouse = Players.LocalPlayer:GetMouse()
-
-        -- Tunggu 3 detik, ambil target mouse
-        task.wait(3)
-        local target = mouse.Target
-        if not target then
-            log("INSPECT", "Tidak ada objek di bawah kursor.")
-            return
-        end
-
-        log("INSPECT", "Target: " .. target:GetFullName())
-        log("INSPECT", "  ClassName: " .. target.ClassName)
-
-        -- Naik ke parent untuk cari "tower root"
-        local current = target
-        local depth = 0
-        while current and depth < 6 do
-            log("INSPECT", string.format("  [Depth %d] %s | Name='%s' | Class='%s' | Children=%d",
-                depth, current:GetFullName(), current.Name,
-                current.ClassName, #current:GetChildren()))
-            current = current.Parent
-            depth = depth + 1
-        end
-
-        -- Cek apakah ada StringValue di dalam tower
-        log("INSPECT", "  -- Mencari StringValue --")
-        for _, d in ipairs(target:GetDescendants()) do
-            if d:IsA("StringValue") or d:IsA("NumberValue") then
-                log("INSPECT", string.format("    %s '%s' = %s",
-                    d.ClassName, d.Name, tostring(d.Value)))
-            end
-        end
+        updateStatus()
+        log("UI", "Record dibersihkan.")
     end)
 
     task.spawn(function()
-        while gui.Parent do
-            refresh()
-            task.wait(0.2)
+        while gui and gui.Parent do
+            updateStatus()
+            task.wait(0.5)
         end
     end)
 end
 
 createUI()
-log("INIT", "Macro v5 siap. Silent-fail logging aktif.")
+
+--//========== HOOK INTERCEPTOR AUTOMATIS ==========
+task.spawn(function()
+    local oldNamecall
+    oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+        local method = getnamecallmethod()
+
+        -- Deteksi otomatis jika Game Speed diubah dari UI game asli
+        if (method == "FireServer" or method == "fireServer") and self.Name == "SetGameSpeed" then
+            local args = {...}
+            if type(args[1]) == "number" then
+                currentGameSpeed = args[1]
+                log("GAME", string.format("Terdeteksi perubahan kecepatan game internal: x%.1f", currentGameSpeed))
+            end
+        end
+
+        -- Pencatatan Makro berbasis Game-Time Units
+        if recording and typeof(self) == "Instance" and (method == "InvokeServer" or method == "invokeServer") then
+            if TARGET_REMOTES[self.Name] then
+                local args = {...}
+                local now = tick()
+                local dt = now - lastRecordTick
+                lastRecordTick = now
+
+                -- Akumulasi waktu berdasarkan Game Speed saat ini
+                recordGameTime = recordGameTime + (dt * currentGameSpeed)
+
+                local currentT = recordGameTime
+
+                task.spawn(function()
+                    pcall(function()
+                        local sArgs = SerializeArgs(args)
+                        table.insert(recordedActions, {
+                            remote     = self,
+                            remoteName = self.Name,
+                            args       = sArgs,
+                            gameTime   = currentT
+                        })
+                        log("RECORD", string.format("#%d Terekam: '%s' | T_game=%.2fs (Spd: x%.1f)", 
+                            #recordedActions, self.Name, currentT, currentGameSpeed))
+                    end)
+                end)
+            end
+        end
+
+        return oldNamecall(self, ...)
+    end))
+    log("INIT", "✅ Interceptor Adaptif Siap! Makro akan otomatis menyesuaikan dengan Speed Game saat Playback.")
+end)
