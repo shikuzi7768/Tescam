@@ -1,437 +1,527 @@
--- 1. SETUP AWAL
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
-local LocalPlayer = Players.LocalPlayer
-local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+--//============================================================
+--// ROBLOX MACRO - Tower Defense v5
+--// Fix: verbose logging + robust tower detection
+--//============================================================
 
--- Hapus UI lama jika ada
-local oldUi = PlayerGui:FindFirstChild("TowerMacroUI")
-if oldUi then oldUi:Destroy() end
+local Players            = game:GetService("Players")
+local ReplicatedStorage  = game:GetService("ReplicatedStorage")
 
--- 2. BUAT UI TERLEBIH DAHULU (AGAR PASTI MUNCUL)
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "TowerMacroUI"
-ScreenGui.ResetOnSpawn = false
-ScreenGui.Parent = PlayerGui
+local RemoteFunctions = ReplicatedStorage:WaitForChild("RemoteFunctions")
+local PlaceTowerRF    = RemoteFunctions:WaitForChild("PlaceTower")
+local SellTowerRF     = RemoteFunctions:WaitForChild("SellTower")
+local UpgradeTowerRF  = RemoteFunctions:WaitForChild("UpgradeTower")
 
-local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 340, 0, 310)
-MainFrame.Position = UDim2.new(0.05, 0, 0.3, 0)
-MainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
-MainFrame.BorderSizePixel = 0
-MainFrame.Active = true
-MainFrame.Draggable = true
-MainFrame.ClipsDescendants = true
-MainFrame.Parent = ScreenGui
+--//========== CONFIG ==========
+local DEBUG_MODE    = true    -- log semua InvokeServer ke 3 remote
+local VERBOSE_HOOK  = true    -- log tiap langkah di recording block (buat diagnosa)
+local HOOK_DISABLED = false
 
-local UICorner = Instance.new("UICorner")
-UICorner.CornerRadius = UDim.new(0, 8)
-UICorner.Parent = MainFrame
+--//========== STATE ==========
+local recording       = false
+local playing         = false
+local recordedActions = {}
+local recordStartTick = 0
+local playStartTick   = 0
 
-local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(1, 0, 0, 35)
-Title.BackgroundColor3 = Color3.fromRGB(35, 35, 42)
-Title.Text = "  Tower Macro (Loading...)"
-Title.TextColor3 = Color3.fromRGB(255, 255, 255)
-Title.TextSize = 13
-Title.Font = Enum.Font.SourceSansBold
-Title.TextXAlignment = Enum.TextXAlignment.Left
-Title.Parent = MainFrame
-
-local TitleCorner = Instance.new("UICorner")
-TitleCorner.CornerRadius = UDim.new(0, 8)
-TitleCorner.Parent = Title
-
-local MinimizeBtn = Instance.new("TextButton")
-MinimizeBtn.Size = UDim2.new(0, 25, 0, 25)
-MinimizeBtn.Position = UDim2.new(1, -30, 0, 5)
-MinimizeBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
-MinimizeBtn.Text = "-"
-MinimizeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-MinimizeBtn.Font = Enum.Font.SourceSansBold
-MinimizeBtn.TextSize = 16
-MinimizeBtn.Parent = Title
-
-local MinCorner = Instance.new("UICorner")
-MinCorner.CornerRadius = UDim.new(0, 4)
-MinCorner.Parent = MinimizeBtn
-
-local Container = Instance.new("Frame")
-Container.Size = UDim2.new(1, 0, 1, -35)
-Container.Position = UDim2.new(0, 0, 0, 35)
-Container.BackgroundTransparency = 1
-Container.Parent = MainFrame
-
-local StatusLabel = Instance.new("TextLabel")
-StatusLabel.Size = UDim2.new(1, -20, 0, 25)
-StatusLabel.Position = UDim2.new(0, 10, 0, 5)
-StatusLabel.BackgroundTransparency = 1
-StatusLabel.Text = "Status: Mencari remote..."
-StatusLabel.TextColor3 = Color3.fromRGB(255, 255, 0)
-StatusLabel.TextSize = 13
-StatusLabel.Font = Enum.Font.SourceSans
-StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
-StatusLabel.Parent = Container
-
-local RecordBtn = Instance.new("TextButton")
-RecordBtn.Size = UDim2.new(0.45, -5, 0, 35)
-RecordBtn.Position = UDim2.new(0, 10, 0, 35)
-RecordBtn.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
-RecordBtn.Text = "RECORD"
-RecordBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-RecordBtn.Font = Enum.Font.SourceSansBold
-RecordBtn.TextSize = 14
-RecordBtn.Parent = Container
-
-local BtnCorner1 = Instance.new("UICorner")
-BtnCorner1.CornerRadius = UDim.new(0, 6)
-BtnCorner1.Parent = RecordBtn
-
-local PlayBtn = Instance.new("TextButton")
-PlayBtn.Size = UDim2.new(0.45, -5, 0, 35)
-PlayBtn.Position = UDim2.new(0.5, 5, 0, 35)
-PlayBtn.BackgroundColor3 = Color3.fromRGB(50, 150, 50)
-PlayBtn.Text = "PLAY"
-PlayBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-PlayBtn.Font = Enum.Font.SourceSansBold
-PlayBtn.TextSize = 14
-PlayBtn.Parent = Container
-
-local BtnCorner2 = Instance.new("UICorner")
-BtnCorner2.CornerRadius = UDim.new(0, 6)
-BtnCorner2.Parent = PlayBtn
-
-local LogFrame = Instance.new("ScrollingFrame")
-LogFrame.Size = UDim2.new(1, -20, 0, 180)
-LogFrame.Position = UDim2.new(0, 10, 0, 80)
-LogFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 18)
-LogFrame.BorderSizePixel = 0
-LogFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
-LogFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
-LogFrame.ScrollBarThickness = 4
-LogFrame.Parent = Container
-
-local UIListLayout = Instance.new("UIListLayout")
-UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
-UIListLayout.Padding = UDim.new(0, 2)
-UIListLayout.Parent = LogFrame
-
-MinimizeBtn.MouseButton1Click:Connect(function()
-    local isMin = MainFrame.Size.Y.Offset == 35
-    if isMin then
-        MainFrame.Size = UDim2.new(0, 340, 0, 310)
-        Container.Visible = true
-        MinimizeBtn.Text = "-"
-    else
-        MainFrame.Size = UDim2.new(0, 340, 0, 35)
-        Container.Visible = false
-        MinimizeBtn.Text = "+"
-    end
-end)
-
--- 3. LOG SYSTEM
-local logQueue = {}
-local function queueLog(msg)
-    table.insert(logQueue, msg)
-    print("[MACRO] " .. msg)
+--//========== LOGGER ==========
+local function log(tag, msg)
+    print(string.format("[%s][MACRO][%s] %s", os.date("%H:%M:%S"), tag, msg))
 end
 
-local function processLogQueue()
-    if #logQueue == 0 then return end
-    for _, msg in ipairs(logQueue) do
-        local timestamp = string.format("[%.2f]", os.clock())
-        local LogText = Instance.new("TextLabel")
-        LogText.Size = UDim2.new(1, -5, 0, 16)
-        LogText.BackgroundTransparency = 1
-        LogText.Text = timestamp .. " " .. msg
-        LogText.TextColor3 = Color3.fromRGB(200, 200, 200)
-        LogText.TextSize = 11
-        LogText.Font = Enum.Font.Code
-        LogText.TextXAlignment = Enum.TextXAlignment.Left
-        LogText.Parent = LogFrame
+--//========== HELPER: CFrame tower — support ALL instance types ==========
+local function getTowerCFrame(tower)
+    if not tower then return nil end
+
+    -- 1. BasePart langsung
+    if tower:IsA("BasePart") then
+        return tower.CFrame
     end
-    logQueue = {}
-    LogFrame.CanvasPosition = Vector2.new(0, 99999)
+
+    -- 2. Model dengan PrimaryPart
+    if tower:IsA("Model") then
+        if tower.PrimaryPart then
+            return tower.PrimaryPart.CFrame
+        end
+        local ok, pivot = pcall(function() return tower:GetPivot() end)
+        if ok and pivot then
+            return pivot
+        end
+    end
+
+    -- 3. Model / Folder / apapun: cari BasePart descendant
+    for _, d in ipairs(tower:GetDescendants()) do
+        if d:IsA("BasePart") then
+            return d.CFrame
+        end
+    end
+
+    return nil
 end
 
-RunService.Heartbeat:Connect(processLogQueue)
-queueLog("UI berhasil dimuat. Mencari remote...")
-
--- 4. CARI REMOTE DENGAN AMAN (LOOPING)
-local TowerAdd, TowerUpgrade, TowerSell
-local attempts = 0
-while not TowerAdd and attempts < 30 do
-    attempts = attempts + 1
-    local ml = ReplicatedStorage:FindFirstChild("ModuleLoader")
-    if ml then
-        local shared = ml:FindFirstChild("Shared")
-        if shared then
-            local network = shared:FindFirstChild("Network")
-            if network then
-                local remoteEvent = network:FindFirstChild("RemoteEvent")
-                if remoteEvent then
-                    TowerAdd = remoteEvent:FindFirstChild("TowerAdd")
-                    TowerUpgrade = remoteEvent:FindFirstChild("TowerUpgrade")
-                    TowerSell = remoteEvent:FindFirstChild("TowerSell")
+--//========== HELPER: Cari tower saat playback ==========
+local function findTowerInstance(name, targetCFrame)
+    if not targetCFrame then return nil end
+    local best, bestDist = nil, math.huge
+    pcall(function()
+        for _, obj in ipairs(getnilinstances()) do
+            if obj.Name == name then
+                local pos = getTowerCFrame(obj)
+                if pos then
+                    local dist = (pos.Position - targetCFrame.Position).Magnitude
+                    if dist < bestDist then
+                        best, bestDist = obj, dist
+                    end
                 end
             end
         end
+    end)
+    if best and bestDist <= 15 then
+        return best, bestDist
     end
-    if not TowerAdd then task.wait(1) end
+    return nil
 end
 
-if not TowerAdd or not TowerUpgrade or not TowerSell then
-    StatusLabel.Text = "Status: ERROR - Remote tidak ditemukan!"
-    StatusLabel.TextColor3 = Color3.fromRGB(255, 50, 50)
-    queueLog("GAGAL: Struktur remote tidak ditemukan di ReplicatedStorage.")
-    return
-end
+--//========== HOOK ==========
+if not HOOK_DISABLED then
+    local oldNamecall
+    local ok_hook, err_hook = pcall(function()
+        local mt = getrawmetatable(game)
+        oldNamecall = mt.__namecall
+        if setreadonly then setreadonly(mt, false) end
 
-Title.Text = "  Tower Macro - Place/Upgrade/Sell"
-StatusLabel.Text = "Status: IDLE"
-StatusLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
-queueLog("Remote ditemukan! Sistem siap.")
+        mt.__namecall = newcclosure(function(self, ...)
+            local method = getnamecallmethod()
 
--- 5. SISTEM MACRO (Sama seperti sebelumnya, tapi lebih aman)
-local rawFireServer = {
-    [TowerAdd]     = TowerAdd.FireServer,
-    [TowerUpgrade] = TowerUpgrade.FireServer,
-    [TowerSell]    = TowerSell.FireServer,
-}
+            -- Identifikasi remote
+            local targetName = nil
+            if self == PlaceTowerRF then targetName = "PlaceTower"
+            elseif self == SellTowerRF then targetName = "SellTower"
+            elseif self == UpgradeTowerRF then targetName = "UpgradeTower" end
 
-local recordedActions = {}
-local isRecording = false
-local isPlaying = false
-local recordingStartTime = 0
-local placeCounter = 0
-local serverIdToPlaceIndex = {}
-local newServerIdByPlaceIndex = {}
-local placeResponseWaiters = {}
-local pendingPlaceResponses = {}
+            -- Semua logic di bawah ini dibungkus pcall
+            -- Supaya error tidak pernah block panggilan asli
+            if targetName and method == "InvokeServer" then
+                pcall(function()
+                    local args = {...}
 
-TowerAdd.OnClientEvent:Connect(function(...)
-    local args = {...}
-    local id, unitId
-    for i = 1, select("#", ...) do
-        local a = args[i]
-        if type(a) == "table" then
-            if a.Id then id = a.Id end
-            if a.UnitId then unitId = a.UnitId end
-        end
-    end
-    if not id then return end
+                    -- DBG: log semua InvokeServer ke target remote
+                    if DEBUG_MODE then
+                        local parts = {}
+                        for i, a in ipairs(args) do
+                            local s = tostring(a)
+                            if #s > 50 then s = s:sub(1, 47) .. "..." end
+                            table.insert(parts, string.format("#%d<%s>=%s",
+                                i, typeof(a), s))
+                        end
+                        log("DBG", string.format("%s:InvokeServer(%s, recording=%s)",
+                            targetName, table.concat(parts, ", "),
+                            tostring(recording)))
+                    end
 
-    if #placeResponseWaiters > 0 then
-        local w = table.remove(placeResponseWaiters, 1)
-        w.resolved = true
-        w.id = id
-        w.unitId = unitId
+                    -- Recording logic
+                    if recording then
+                        local t = tick() - recordStartTick
+
+                        if targetName == "PlaceTower" then
+                            local towerName, cframe = args[1], args[2]
+                            if VERBOSE_HOOK then
+                                log("V", string.format(
+                                    "Place: #1 typeof=%s, #2 typeof=%s",
+                                    typeof(towerName), typeof(cframe)))
+                            end
+                            if typeof(cframe) == "CFrame" and type(towerName) == "string" then
+                                table.insert(recordedActions, {
+                                    type = "place", time = t,
+                                    towerName = towerName, cframe = cframe,
+                                })
+                                log("RECORD", string.format(
+                                    "#%d PLACE '%s' @ T=%.3fs | Pos=(%.1f, %.1f, %.1f)",
+                                    #recordedActions, towerName, t,
+                                    cframe.Position.X, cframe.Position.Y, cframe.Position.Z))
+                            else
+                                log("RECORD", "⚠ Place arg tidak valid, skip")
+                            end
+
+                        elseif targetName == "UpgradeTower" or targetName == "SellTower" then
+                            local actionType = (targetName == "UpgradeTower"
+                                and "upgrade" or "sell")
+                            local tower = args[1]
+
+                            if VERBOSE_HOOK then
+                                log("V", string.format(
+                                    "%s: arg count=%d, #1 typeof=%s",
+                                    targetName, #args, typeof(tower)))
+                            end
+
+                            -- Cek Instance — pakai dua cara
+                            local isInstance = typeof(tower) == "Instance"
+                            if not isInstance then
+                                -- Fallback: cek apakah punya property khas Instance
+                                local ok_check = pcall(function()
+                                    local _ = tower.Name
+                                    local _ = tower.ClassName
+                                    isInstance = true
+                                end)
+                            end
+
+                            if isInstance then
+                                local name    = tower.Name
+                                local class   = tower.ClassName
+                                local cf      = getTowerCFrame(tower)
+
+                                if VERBOSE_HOOK then
+                                    log("V", string.format(
+                                        "  Instance OK: Name='%s' Class='%s' CF=%s",
+                                        name, class, tostring(cf ~= nil)))
+                                end
+
+                                if cf then
+                                    table.insert(recordedActions, {
+                                        type = actionType, time = t,
+                                        towerName = name, towerCFrame = cf,
+                                    })
+                                    log("RECORD", string.format(
+                                        "#%d %s '%s' (Class=%s) @ T=%.3fs | Pos=(%.1f, %.1f, %.1f)",
+                                        #recordedActions, string.upper(actionType),
+                                        name, class, t,
+                                        cf.Position.X, cf.Position.Y, cf.Position.Z))
+                                else
+                                    log("RECORD", string.format(
+                                        "⚠ Tidak bisa ambil CFrame dari '%s' (Class=%s)",
+                                        name, class))
+                                end
+                            else
+                                log("RECORD", string.format(
+                                    "⚠ Arg bukan Instance (typeof=%s), skip",
+                                    typeof(tower)))
+                            end
+                        end
+                    end
+                end)  -- end pcall
+            end
+
+            -- WAJIB: forward ke original namecall
+            return oldNamecall(self, ...)
+        end)
+
+        if setreadonly then setreadonly(mt, true) end
+    end)
+
+    if ok_hook then
+        log("INIT", "Hook __namecall terpasang.")
     else
-        table.insert(pendingPlaceResponses, {id = id, unitId = unitId})
+        log("INIT", "❌ HOOK GAGAL: " .. tostring(err_hook))
     end
-end)
+end
 
-local function copyArg(arg)
-    if type(arg) == "table" then
-        local c = {}
-        for k, v in pairs(arg) do c[k] = copyArg(v) end
-        return c
+--//========== RECORD / PLAY ==========
+local function startRecord()
+    if playing or recording then return end
+    recordedActions = {}
+    recordStartTick = tick()
+    recording = true
+    log("RECORD", "▶ Recording dimulai.")
+end
+
+local function stopRecord()
+    if not recording then return end
+    recording = false
+    log("RECORD", string.format("⏹ Recording dihentikan. %d aksi.", #recordedActions))
+end
+
+local function stopPlay()
+    if not playing then return end
+    playing = false
+    log("PLAY", "⏹ Playback dihentikan.")
+end
+
+-- Format argumen untuk Sell/Upgrade
+local function tryInvoke(remote, action, label)
+    local tower, dist = findTowerInstance(action.towerName, action.towerCFrame)
+    if not tower then
+        return false, string.format("Tower '%s' tidak ditemukan", action.towerName)
     end
-    return arg
-end
 
-local function copyArgs(p, n)
-    local c = table.create(n)
-    for i = 1, n do c[i] = copyArg(p[i]) end
-    return c
-end
-
-local function shortId(id)
-    if not id or #id < 8 then return tostring(id) end
-    return id:sub(1, 8)
-end
-
-local function getLabel(t)
-    if t == "Place" then return "PLACE" end
-    if t == "Upgrade" then return "UPGRADE" end
-    if t == "Sell" then return "SELL" end
-    return t
-end
-
-local function describeArg(a)
-    local t = typeof(a)
-    if t == "table" then return "{...}" 
-    elseif t == "string" then return '"'..a..'"'
-    else return tostring(a) end
-end
-
-local function recordAction(actionType, remote, packedArgs, argCount)
-    if not isRecording then return end
-    local elapsedTime = os.clock() - recordingStartTime
-    local storedArgs = copyArgs(packedArgs, argCount)
-
-    local entry = {
-        time = elapsedTime,
-        actionType = actionType,
-        remoteName = remote.Name,
-        args = storedArgs,
-        argCount = argCount,
+    local candidates = {
+        { name = "Instance", value = tower },
+        { name = "DebugId",  value = tower:GetDebugId() },
+        { name = "Name",     value = tower.Name },
     }
-
-    if actionType == "Place" then
-        local uid = (type(storedArgs[1]) == "table" and storedArgs[1].UnitId) or nil
-        placeCounter = placeCounter + 1
-        entry.placeIndex = placeCounter
-        entry.unitId = uid
-        queueLog(string.format("REC [%d] PLACE #%d UnitId=%s [t=%.2f]", #recordedActions, placeCounter, shortId(uid), elapsedTime))
-    elseif actionType == "Upgrade" or actionType == "Sell" then
-        local oldId = (type(storedArgs[1]) == "table" and storedArgs[1].Id) or nil
-        local pIdx = oldId and serverIdToPlaceIndex[oldId] or nil
-        entry.originalId = oldId
-        entry.placeIndex = pIdx
-        queueLog(string.format("REC [%d] %s Id=%s -> place#%s [t=%.2f]", #recordedActions, getLabel(actionType), shortId(oldId), tostring(pIdx or "?"), elapsedTime))
-    end
-
-    table.insert(recordedActions, entry)
-end
-
--- Direct Hook (Aman dari error executor)
-local remotesToHook = {
-    { remote = TowerAdd,     actionType = "Place" },
-    { remote = TowerUpgrade, actionType = "Upgrade" },
-    { remote = TowerSell,    actionType = "Sell" },
-}
-for _, entry in ipairs(remotesToHook) do
-    local rawFire = entry.remote.FireServer
-    entry.remote.FireServer = function(self, ...)
-        if isRecording then 
-            local n = select("#", ...)
-            if n > 0 then recordAction(entry.actionType, self, table.pack(...), n) end
+    for _, child in ipairs(tower:GetDescendants()) do
+        if child:IsA("StringValue") then
+            table.insert(candidates, {
+                name = "StrVal:" .. child.Name, value = child.Value,
+            })
         end
-        return rawFire(self, ...)
     end
+
+    local lastErr
+    for _, cand in ipairs(candidates) do
+        local ok, err = pcall(function() remote:InvokeServer(cand.value) end)
+        if ok then
+            return true, string.format("%s '%s' via %s (dist=%.2f)",
+                label, action.towerName, cand.name, dist)
+        end
+        lastErr = err
+        log("TRY", string.format("  Format %s gagal: %s", cand.name, tostring(err)))
+    end
+    return false, "Semua format gagal. Error terakhir: " .. tostring(lastErr)
 end
 
--- Playback
-local MIN_INTERVAL = 0.2
-local remoteByName = { ["TowerAdd"] = TowerAdd, ["TowerUpgrade"] = TowerUpgrade, ["TowerSell"] = TowerSell }
-
-local function waitForPlaceResponse(timeout)
-    if #pendingPlaceResponses > 0 then return table.remove(pendingPlaceResponses, 1) end
-    local w = {resolved = false, id = nil, unitId = nil}
-    table.insert(placeResponseWaiters, w)
-    local t0 = os.clock()
-    while not w.resolved and (os.clock() - t0) < timeout do task.wait(0.05) end
-    if not w.resolved then
-        for i, x in ipairs(placeResponseWaiters) do if x == w then table.remove(placeResponseWaiters, i) break end end
-        return nil
+local function executeAction(action)
+    if action.type == "place" then
+        PlaceTowerRF:InvokeServer(action.towerName, action.cframe)
+        return true, string.format("PLACE '%s' | (%.1f, %.1f, %.1f)",
+            action.towerName,
+            action.cframe.Position.X, action.cframe.Position.Y, action.cframe.Position.Z)
+    elseif action.type == "upgrade" then
+        return tryInvoke(UpgradeTowerRF, action, "UPGRADE")
+    elseif action.type == "sell" then
+        return tryInvoke(SellTowerRF, action, "SELL")
     end
-    return w
+    return false, "Tipe tidak dikenal: " .. tostring(action.type)
 end
 
-local function playMacro()
-    if isPlaying or #recordedActions == 0 then return end
-    isPlaying = true
-    StatusLabel.Text = "Status: PLAYING..."
-    StatusLabel.TextColor3 = Color3.fromRGB(50, 255, 50)
-    queueLog(string.format("PLAYBACK STARTED: %d aksi", #recordedActions))
+local function startPlay()
+    if recording or playing then return end
+    if #recordedActions == 0 then log("PLAY", "Tidak ada aksi.") return end
+    playing = true
+    playStartTick = tick()
+    log("PLAY", string.format("▶ Playback dimulai. %d aksi...", #recordedActions))
 
     task.spawn(function()
-        newServerIdByPlaceIndex = {}
-        pendingPlaceResponses = {}
-        placeResponseWaiters = {}
-        local playPlaceCounter = 0
-        local playStartTime = os.clock()
-        local lastFire = 0
+        for i, action in ipairs(recordedActions) do
+            if not playing then break end
+            local waitTime = action.time - (tick() - playStartTick)
+            if waitTime > 0 then task.wait(waitTime) end
+            if not playing then break end
 
-        for index, action in ipairs(recordedActions) do
-            if not isPlaying then break end
-            local waitDuration = action.time - (os.clock() - playStartTime)
-            if waitDuration > 0 then task.wait(waitDuration) end
-            local sinceLast = os.clock() - lastFire
-            if sinceLast < MIN_INTERVAL then task.wait(MIN_INTERVAL - sinceLast) end
-            if not isPlaying then break end
-
-            local remote = remoteByName[action.remoteName]
-            local fireArgs = copyArgs(action.args, action.argCount)
-            local rawFn = rawFireServer[remote] or remote.FireServer
-
-            if action.actionType == "Place" then
-                playPlaceCounter = playPlaceCounter + 1
-                local myPlaceIndex = playPlaceCounter
-                local sentUnitId = (type(fireArgs[1]) == "table" and fireArgs[1].UnitId) or nil
-                
-                local ok, err = pcall(function() rawFn(remote, table.unpack(fireArgs, 1, action.argCount)) end)
-                if ok then
-                    queueLog(string.format("PLAY [%d/%d] PLACE #%d UnitId=%s", index, #recordedActions, myPlaceIndex, shortId(sentUnitId)))
-                    local resp = waitForPlaceResponse(3)
-                    if resp and resp.id then
-                        newServerIdByPlaceIndex[myPlaceIndex] = resp.id
-                        queueLog(string.format("   <- server Id: %s", shortId(resp.id)))
-                    else
-                        queueLog("   ! tidak ada respon server (timeout)")
-                    end
-                else
-                    queueLog(string.format("FAILED [%d] PLACE: %s", index, tostring(err)))
-                end
-            elseif action.actionType == "Upgrade" or action.actionType == "Sell" then
-                local pIdx = action.placeIndex
-                if type(fireArgs[1]) == "table" and fireArgs[1].Id then
-                    local newId = pIdx and newServerIdByPlaceIndex[pIdx]
-                    if newId then
-                        local oldId = fireArgs[1].Id
-                        fireArgs[1].Id = newId
-                        queueLog(string.format("   -> remap Id %s -> %s (place #%d)", shortId(oldId), shortId(newId), pIdx))
-                    else
-                        queueLog(string.format("   ! tidak ada Id baru untuk place #%s (dilewati)", tostring(pIdx or "?")))
-                        goto continue
-                    end
-                end
-                local ok, err = pcall(function() rawFn(remote, table.unpack(fireArgs, 1, action.argCount)) end)
-                if ok then
-                    queueLog(string.format("PLAY [%d/%d] %s: %s", index, #recordedActions, getLabel(action.actionType), describeArg(fireArgs[1])))
-                else
-                    queueLog(string.format("FAILED [%d] %s: %s", index, getLabel(action.actionType), tostring(err)))
-                end
+            local ok, msg = pcall(executeAction, action)
+            if ok and msg then
+                log("PLAY", string.format("[%d/%d] %s", i, #recordedActions, msg))
+            else
+                log("PLAY", string.format("[%d/%d] ❌ GAGAL: %s",
+                    i, #recordedActions, tostring(msg)))
             end
-            ::continue::
-            lastFire = os.clock()
         end
-        isPlaying = false
-        StatusLabel.Text = "Status: IDLE"
-        StatusLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
-        queueLog("PLAYBACK FINISHED")
+        playing = false
+        log("PLAY", "✅ Playback selesai.")
     end)
 end
 
--- Buttons
-RecordBtn.MouseButton1Click:Connect(function()
-    if isPlaying then return end
-    if not isRecording then
-        isRecording = true
-        recordedActions = {}
-        recordingStartTime = os.clock()
-        placeCounter = 0
-        serverIdToPlaceIndex = {}
-        newServerIdByPlaceIndex = {}
-        for _, child in ipairs(LogFrame:GetChildren()) do if child:IsA("TextLabel") then child:Destroy() end end
-        RecordBtn.Text = "STOP"
-        RecordBtn.BackgroundColor3 = Color3.fromRGB(230, 80, 30)
-        StatusLabel.Text = "Status: RECORDING..."
-        StatusLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
-        queueLog("RECORDING STARTED")
-    else
-        isRecording = false
-        RecordBtn.Text = "RECORD"
-        RecordBtn.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
-        StatusLabel.Text = "Status: IDLE"
-        StatusLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
-        queueLog(string.format("RECORDING STOPPED: %d aksi", #recordedActions))
-    end
-end)
+--//========== UI ==========
+local function createUI()
+    local parent = (gethui and gethui()) or game:GetService("CoreGui")
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "MacroUI"
+    gui.ResetOnSpawn = false
+    gui.Parent = parent
 
-PlayBtn.MouseButton1Click:Connect(function()
-    if isRecording then queueLog("WARNING: Stop Record dulu!") return end
-    playMacro()
-end)
+    local main = Instance.new("Frame")
+    main.Size = UDim2.new(0, 310, 0, 250)
+    main.Position = UDim2.new(0, 20, 0, 100)
+    main.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
+    main.BorderSizePixel = 0
+    main.Active = true
+    main.Draggable = true
+    main.Parent = gui
+    Instance.new("UICorner", main).CornerRadius = UDim.new(0, 10)
+
+    local stroke = Instance.new("UIStroke", main)
+    stroke.Color = Color3.fromRGB(70, 70, 85)
+    stroke.Thickness = 1
+
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, 0, 0, 34)
+    title.BackgroundColor3 = Color3.fromRGB(34, 34, 42)
+    title.BorderSizePixel = 0
+    title.Text = "🎮  MACRO v5  •  TD Automation"
+    title.TextColor3 = Color3.fromRGB(235, 235, 235)
+    title.TextSize = 14
+    title.Font = Enum.Font.GothamBold
+    title.Parent = main
+    Instance.new("UICorner", title).CornerRadius = UDim.new(0, 10)
+
+    local status = Instance.new("TextLabel")
+    status.Size = UDim2.new(1, -20, 0, 18)
+    status.Position = UDim2.new(0, 10, 0, 38)
+    status.BackgroundTransparency = 1
+    status.TextXAlignment = Enum.TextXAlignment.Left
+    status.TextColor3 = Color3.fromRGB(200, 200, 210)
+    status.TextSize = 12
+    status.Font = Enum.Font.Gotham
+    status.Text = "Status: Idle"
+    status.Parent = main
+
+    local breakdown = Instance.new("TextLabel")
+    breakdown.Size = UDim2.new(1, -20, 0, 16)
+    breakdown.Position = UDim2.new(0, 10, 0, 56)
+    breakdown.BackgroundTransparency = 1
+    breakdown.TextXAlignment = Enum.TextXAlignment.Left
+    breakdown.TextColor3 = Color3.fromRGB(150, 150, 160)
+    breakdown.TextSize = 11
+    breakdown.Font = Enum.Font.Gotham
+    breakdown.Text = "Place: 0  |  Upgrade: 0  |  Sell: 0"
+    breakdown.Parent = main
+
+    local recBtn = Instance.new("TextButton")
+    recBtn.Size = UDim2.new(0.5, -15, 0, 44)
+    recBtn.Position = UDim2.new(0, 10, 0, 80)
+    recBtn.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
+    recBtn.BorderSizePixel = 0
+    recBtn.Text = "⏺  RECORD"
+    recBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    recBtn.TextSize = 14
+    recBtn.Font = Enum.Font.GothamBold
+    recBtn.Parent = main
+    Instance.new("UICorner", recBtn).CornerRadius = UDim.new(0, 8)
+
+    local playBtn = Instance.new("TextButton")
+    playBtn.Size = UDim2.new(0.5, -15, 0, 44)
+    playBtn.Position = UDim2.new(0.5, 5, 0, 80)
+    playBtn.BackgroundColor3 = Color3.fromRGB(55, 165, 95)
+    playBtn.BorderSizePixel = 0
+    playBtn.Text = "▶  PLAY"
+    playBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    playBtn.TextSize = 14
+    playBtn.Font = Enum.Font.GothamBold
+    playBtn.Parent = main
+    Instance.new("UICorner", playBtn).CornerRadius = UDim.new(0, 8)
+
+    local clearBtn = Instance.new("TextButton")
+    clearBtn.Size = UDim2.new(1, -20, 0, 26)
+    clearBtn.Position = UDim2.new(0, 10, 0, 132)
+    clearBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+    clearBtn.BorderSizePixel = 0
+    clearBtn.Text = "🗑  Clear Records"
+    clearBtn.TextColor3 = Color3.fromRGB(220, 220, 220)
+    clearBtn.TextSize = 11
+    clearBtn.Font = Enum.Font.Gotham
+    clearBtn.Parent = main
+    Instance.new("UICorner", clearBtn).CornerRadius = UDim.new(0, 6)
+
+    local dumpBtn = Instance.new("TextButton")
+    dumpBtn.Size = UDim2.new(1, -20, 0, 26)
+    dumpBtn.Position = UDim2.new(0, 10, 0, 162)
+    dumpBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+    dumpBtn.BorderSizePixel = 0
+    dumpBtn.Text = "📋  Dump Records ke Console"
+    dumpBtn.TextColor3 = Color3.fromRGB(220, 220, 220)
+    dumpBtn.TextSize = 11
+    dumpBtn.Font = Enum.Font.Gotham
+    dumpBtn.Parent = main
+    Instance.new("UICorner", dumpBtn).CornerRadius = UDim.new(0, 6)
+
+    -- BARU: Inspect tower di bawah kursor
+    local inspectBtn = Instance.new("TextButton")
+    inspectBtn.Size = UDim2.new(1, -20, 0, 26)
+    inspectBtn.Position = UDim2.new(0, 10, 0, 192)
+    inspectBtn.BackgroundColor3 = Color3.fromRGB(60, 50, 80)
+    inspectBtn.BorderSizePixel = 0
+    inspectBtn.Text = "🔍  Inspect Tower di Bawah Kursor"
+    inspectBtn.TextColor3 = Color3.fromRGB(220, 220, 220)
+    inspectBtn.TextSize = 11
+    inspectBtn.Font = Enum.Font.Gotham
+    inspectBtn.Parent = main
+    Instance.new("UICorner", inspectBtn).CornerRadius = UDim.new(0, 6)
+
+    local function refresh()
+        local s = "Idle"
+        if recording then s = "🔴 Recording"
+        elseif playing then s = "🟢 Playing" end
+        local cp, cu, cs = 0, 0, 0
+        for _, a in ipairs(recordedActions) do
+            if a.type == "place" then cp = cp + 1
+            elseif a.type == "upgrade" then cu = cu + 1
+            elseif a.type == "sell" then cs = cs + 1 end
+        end
+        status.Text = string.format("Status: %s  |  Total: %d", s, #recordedActions)
+        breakdown.Text = string.format("Place: %d  |  Upgrade: %d  |  Sell: %d", cp, cu, cs)
+    end
+
+    recBtn.MouseButton1Click:Connect(function()
+        if recording then
+            stopRecord()
+            recBtn.Text = "⏺  RECORD"
+            recBtn.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
+        else
+            startRecord()
+            recBtn.Text = "⏹  STOP"
+            recBtn.BackgroundColor3 = Color3.fromRGB(120, 30, 30)
+        end
+        refresh()
+    end)
+
+    playBtn.MouseButton1Click:Connect(function()
+        if playing then stopPlay() else startPlay() end
+        refresh()
+    end)
+
+    clearBtn.MouseButton1Click:Connect(function()
+        if recording or playing then return end
+        recordedActions = {}
+        log("UI", "Records dibersihkan.")
+        refresh()
+    end)
+
+    dumpBtn.MouseButton1Click:Connect(function()
+        log("DUMP", string.format("Total %d aksi:", #recordedActions))
+        for i, a in ipairs(recordedActions) do
+            if a.type == "place" then
+                log("DUMP", string.format("  [%d] PLACE '%s' @ %.3fs",
+                    i, a.towerName, a.time))
+            else
+                log("DUMP", string.format("  [%d] %s '%s' @ %.3fs",
+                    i, string.upper(a.type), a.towerName, a.time))
+            end
+        end
+    end)
+
+    -- Inspect: klik tower di game, lihat struktur lengkapnya
+    inspectBtn.MouseButton1Click:Connect(function()
+        log("INSPECT", "Klik pada tower di game...")
+        local UIS = game:GetService("UserInputService")
+        local mouse = Players.LocalPlayer:GetMouse()
+
+        -- Tunggu 3 detik, ambil target mouse
+        task.wait(3)
+        local target = mouse.Target
+        if not target then
+            log("INSPECT", "Tidak ada objek di bawah kursor.")
+            return
+        end
+
+        log("INSPECT", "Target: " .. target:GetFullName())
+        log("INSPECT", "  ClassName: " .. target.ClassName)
+
+        -- Naik ke parent untuk cari "tower root"
+        local current = target
+        local depth = 0
+        while current and depth < 6 do
+            log("INSPECT", string.format("  [Depth %d] %s | Name='%s' | Class='%s' | Children=%d",
+                depth, current:GetFullName(), current.Name,
+                current.ClassName, #current:GetChildren()))
+            current = current.Parent
+            depth = depth + 1
+        end
+
+        -- Cek apakah ada StringValue di dalam tower
+        log("INSPECT", "  -- Mencari StringValue --")
+        for _, d in ipairs(target:GetDescendants()) do
+            if d:IsA("StringValue") or d:IsA("NumberValue") then
+                log("INSPECT", string.format("    %s '%s' = %s",
+                    d.ClassName, d.Name, tostring(d.Value)))
+            end
+        end
+    end)
+
+    task.spawn(function()
+        while gui.Parent do
+            refresh()
+            task.wait(0.2)
+        end
+    end)
+end
+
+createUI()
+log("INIT", "Macro v5 siap. Silent-fail logging aktif.")
