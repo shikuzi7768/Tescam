@@ -1,6 +1,6 @@
 --//============================================================
 --// ROBLOX MACRO - Fixed Vector3/CFrame Serialization & Remote Support
---// Fitur: Complete Roblox Data Serialization, Auto Rejoin & Multi-Remote
+--// Fitur: Complete Roblox Data Serialization, Auto Rejoin, Multi-Remote & Auto 2x Speed
 --//============================================================
 
 local Players           = game:GetService("Players")
@@ -19,6 +19,7 @@ local TARGET_REMOTES = {
 local recording          = false
 local playing            = false
 local autoPlayEnabled    = false
+local auto2xSpeedEnabled = false
 local recordedActions    = {}
 local playbackSpeed      = 1.0
 local currentGameSpeed   = 1.0
@@ -146,6 +147,7 @@ local function SaveConfig()
     pcall(function()
         local cfg = {
             autoPlay         = autoPlayEnabled,
+            auto2xSpeed      = auto2xSpeedEnabled,
             lastMacroName    = currentMacroName,
             playbackSpeed    = playbackSpeed,
             currentGameSpeed = currentGameSpeed
@@ -161,6 +163,7 @@ local function LoadConfig()
         local data = HttpService:JSONDecode(readfile(CONFIG_FILE))
         if data then
             if data.autoPlay ~= nil then autoPlayEnabled = data.autoPlay end
+            if data.auto2xSpeed ~= nil then auto2xSpeedEnabled = data.auto2xSpeed end
             if data.lastMacroName then currentMacroName = data.lastMacroName end
             if data.playbackSpeed then playbackSpeed = data.playbackSpeed end
             if data.currentGameSpeed then currentGameSpeed = data.currentGameSpeed end
@@ -237,6 +240,10 @@ end
 local function StartPlayback()
     if recording or #recordedActions == 0 or playing then return end
     playing = true
+
+    if auto2xSpeedEnabled then
+        SetGameSpeed(2.0)
+    end
 
     task.spawn(function()
         log("PLAY", string.format("▶ Memulai '%s' [Strict Sequential & Extended Retry]...", currentMacroName))
@@ -332,7 +339,7 @@ local function createUI()
     gui.Parent = parent
 
     local main = Instance.new("Frame")
-    main.Size = UDim2.new(0, 300, 0, 280)
+    main.Size = UDim2.new(0, 300, 0, 310)
     main.Position = UDim2.new(0, 20, 0, 100)
     main.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
     main.Active = true
@@ -367,7 +374,7 @@ local function createUI()
     local isMinimized = false
     minBtn.MouseButton1Click:Connect(function()
         isMinimized = not isMinimized
-        local targetSize = isMinimized and UDim2.new(0, 300, 0, 32) or UDim2.new(0, 300, 0, 280)
+        local targetSize = isMinimized and UDim2.new(0, 300, 0, 32) or UDim2.new(0, 300, 0, 310)
         
         TweenService:Create(main, TweenInfo.new(0.25, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
             Size = targetSize
@@ -488,9 +495,30 @@ local function createUI()
     gameSpeedBtn.Parent = main
     Instance.new("UICorner", gameSpeedBtn).CornerRadius = UDim.new(0, 5)
 
+    local auto2xBtn = Instance.new("TextButton")
+    auto2xBtn.Size = UDim2.new(1, -20, 0, 26)
+    auto2xBtn.Position = UDim2.new(0, 10, 0, 236)
+    auto2xBtn.Font = Enum.Font.GothamBold
+    auto2xBtn.TextSize = 10
+    auto2xBtn.Parent = main
+    Instance.new("UICorner", auto2xBtn).CornerRadius = UDim.new(0, 5)
+
+    local function refreshAuto2xUI()
+        if auto2xSpeedEnabled then
+            auto2xBtn.Text = "⚡ AUTO 2x GAME SPEED: ON"
+            auto2xBtn.BackgroundColor3 = Color3.fromRGB(40, 140, 70)
+            auto2xBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        else
+            auto2xBtn.Text = "⚡ AUTO 2x GAME SPEED: OFF"
+            auto2xBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 75)
+            auto2xBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+        end
+    end
+    refreshAuto2xUI()
+
     local clearBtn = Instance.new("TextButton")
     clearBtn.Size = UDim2.new(1, -20, 0, 22)
-    clearBtn.Position = UDim2.new(0, 10, 0, 236)
+    clearBtn.Position = UDim2.new(0, 10, 0, 268)
     clearBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
     clearBtn.Text = "🗑 Clear Records"
     clearBtn.TextColor3 = Color3.fromRGB(180, 180, 180)
@@ -560,6 +588,19 @@ local function createUI()
             end
         else
             log("AUTOPLAY", "⏹ Auto Play dimatikan.")
+        end
+    end)
+
+    auto2xBtn.MouseButton1Click:Connect(function()
+        auto2xSpeedEnabled = not auto2xSpeedEnabled
+        refreshAuto2xUI()
+        SaveConfig()
+
+        if auto2xSpeedEnabled then
+            SetGameSpeed(2.0)
+            log("SPEED", "⚡ Auto 2x Game Speed diaktifkan.")
+        else
+            log("SPEED", "⏹ Auto 2x Game Speed dimatikan.")
         end
     end)
 
@@ -674,12 +715,19 @@ end)
 task.spawn(function()
     task.wait(3)
     
+    if auto2xSpeedEnabled then
+        SetGameSpeed(2.0)
+    end
+
     if LoadMacroFromFile(currentMacroName) then
         log("INIT", string.format("📂 Makro '%s' berhasil dimuat dari file tersimpan.", currentMacroName))
         
         if autoPlayEnabled then
             log("AUTOPLAY", "🤖 Auto Play ON. Menunggu 8 detik (fase Vote Difficulty)...")
             task.wait(8)
+            if auto2xSpeedEnabled then
+                SetGameSpeed(2.0)
+            end
             StartPlayback()
         end
     else
