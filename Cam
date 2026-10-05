@@ -1,11 +1,12 @@
 --//============================================================
 --// ROBLOX MACRO - Auto Save Rejoin, Persistent Config & Auto Play
---// Fitur: Permanent Auto-Save, Auto Play on Rejoin, Strict Retry
+--// Fitur: Permanent Auto-Save, Auto Play on Rejoin, Strict Retry, UI Minimize
 --//============================================================
 
 local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService       = game:GetService("HttpService")
+local TweenService      = game:GetService("TweenService")
 
 local LocalPlayer = Players.LocalPlayer
 
@@ -112,7 +113,7 @@ local function DeserializeArgs(args)
             else
                 local tCopy = {}
                 for k, val in pairs(v) do
-                    tCopy[k] = ResolveInstance(val)
+                    tCopy[k] = ResolveInstance(v)
                 end
                 deserialized[i] = tCopy
             end
@@ -311,6 +312,7 @@ local function createUI()
     main.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
     main.Active = true
     main.Draggable = true
+    main.ClipsDescendants = true -- Memotong elemen di luar ukuran frame saat di-minimize
     main.Parent = gui
 
     Instance.new("UICorner", main).CornerRadius = UDim.new(0, 8)
@@ -324,6 +326,31 @@ local function createUI()
     title.Font = Enum.Font.GothamBold
     title.Parent = main
     Instance.new("UICorner", title).CornerRadius = UDim.new(0, 8)
+
+    -- Tombol Minimize
+    local minBtn = Instance.new("TextButton")
+    minBtn.Size = UDim2.new(0, 24, 0, 24)
+    minBtn.Position = UDim2.new(1, -28, 0, 4)
+    minBtn.BackgroundColor3 = Color3.fromRGB(55, 55, 70)
+    minBtn.Text = "-"
+    minBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    minBtn.Font = Enum.Font.GothamBold
+    minBtn.TextSize = 14
+    minBtn.ZIndex = 2
+    minBtn.Parent = main
+    Instance.new("UICorner", minBtn).CornerRadius = UDim.new(0, 5)
+
+    local isMinimized = false
+    minBtn.MouseButton1Click:Connect(function()
+        isMinimized = not isMinimized
+        local targetSize = isMinimized and UDim2.new(0, 300, 0, 32) or UDim2.new(0, 300, 0, 280)
+        
+        TweenService:Create(main, TweenInfo.new(0.25, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+            Size = targetSize
+        }):Play()
+
+        minBtn.Text = isMinimized and "+" or "-"
+    end)
 
     local status = Instance.new("TextLabel")
     status.Size = UDim2.new(1, -20, 0, 18)
