@@ -1,6 +1,6 @@
 --//============================================================
 --// ROBLOX MACRO - Fixed Vector3/CFrame Serialization & Remote Support
---// Fitur: Complete Roblox Data Serialization, Auto Rejoin, Multi-Remote, Auto 2x Speed
+--// Fitur: Complete Roblox Data Serialization, Auto Rejoin, Multi-Remote & Auto 2x Speed
 --//============================================================
 
 local Players           = game:GetService("Players")
@@ -16,17 +16,17 @@ local TARGET_REMOTES = {
     ["SellTower"]    = true
 }
 
-local recording           = false
-local playing             = false
-local autoPlayEnabled     = false
-local auto2xSpeedEnabled  = false
-local recordedActions     = {}
-local playbackSpeed       = 1.0
-local currentGameSpeed    = 1.0
-local currentMacroName    = "Makro 1"
+local recording          = false
+local playing            = false
+local autoPlayEnabled    = false
+local auto2xSpeedEnabled = false
+local recordedActions    = {}
+local playbackSpeed      = 1.0
+local currentGameSpeed   = 1.0
+local currentMacroName   = "Makro 1"
 
-local recordGameTime      = 0
-local lastRecordTick      = 0
+local recordGameTime     = 0
+local lastRecordTick     = 0
 
 local CONFIG_FILE = "TD_Macro_Config.json"
 
@@ -51,7 +51,7 @@ end
 local function SetGameSpeed(speed)
     currentGameSpeed = speed
     pcall(function()
-        local speedRemote = ReplicatedStorage:FindFirstChild("RemoteEvents") and ReplicatedStorage.RemoteEvents:FindFirstChild("SetGameSpeed") or GetRemoteByName("SetGameSpeed")
+        local speedRemote = ReplicatedStorage:FindFirstChild("RemoteEvents") and ReplicatedStorage.RemoteEvents:FindFirstChild("SetGameSpeed")
         if speedRemote then
             speedRemote:FireServer(speed)
             log("GAME", string.format("⚡ Kecepatan game diatur ke x%.1f", speed))
@@ -309,7 +309,7 @@ local function StartPlayback()
 
                 if not actionSuccess then
                     retryAttempts = retryAttempts + 1
-                    log("PLAY", string.format("⚠ Aksi [%d/%d] '%s' belum berhasil (Mencoba ulang #%d)...", 
+                    log("PLAY", string.format("⚠️ Aksi [%d/%d] '%s' belum berhasil (Mencoba ulang #%d)...", 
                         i, #recordedActions, act.remoteName, retryAttempts))
                     task.wait(0.5 / (currentGameSpeed * playbackSpeed))
                 end
@@ -339,7 +339,7 @@ local function createUI()
     gui.Parent = parent
 
     local main = Instance.new("Frame")
-    main.Size = UDim2.new(0, 300, 0, 305)
+    main.Size = UDim2.new(0, 300, 0, 310)
     main.Position = UDim2.new(0, 20, 0, 100)
     main.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
     main.Active = true
@@ -374,7 +374,7 @@ local function createUI()
     local isMinimized = false
     minBtn.MouseButton1Click:Connect(function()
         isMinimized = not isMinimized
-        local targetSize = isMinimized and UDim2.new(0, 300, 0, 32) or UDim2.new(0, 300, 0, 305)
+        local targetSize = isMinimized and UDim2.new(0, 300, 0, 32) or UDim2.new(0, 300, 0, 310)
         
         TweenService:Create(main, TweenInfo.new(0.25, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
             Size = targetSize
