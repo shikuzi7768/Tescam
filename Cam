@@ -1,6 +1,6 @@
 --//============================================================
 --// ROBLOX MACRO - Auto Save Rejoin, Persistent Config & Auto Play
---// Fitur: Permanent Auto-Save, Auto Play on Rejoin, Strict Retry, UI Minimize
+--// Fitur: Permanent Auto-Save, Auto Play on Rejoin, Infinite Retry (No Skip)
 --//============================================================
 
 local Players           = game:GetService("Players")
@@ -220,11 +220,10 @@ local function StartPlayback()
     playing = true
 
     task.spawn(function()
-        log("PLAY", string.format("▶ Memulai '%s' [Strict Sequential & Retry Active]...", currentMacroName))
+        log("PLAY", string.format("▶ Memulai '%s' [Strict Sequential & Continuous Retry Active]...", currentMacroName))
 
         local playElapsedGameTime = 0
         local lastPlayTick = tick()
-        local MAX_RETRIES = 15 -- Batas percobaan retry agar tidak stuck selamanya
 
         for i, act in ipairs(recordedActions) do
             if not playing then break end
@@ -251,6 +250,7 @@ local function StartPlayback()
             local actionSuccess = false
             local retryAttempts = 0
 
+            -- Perbaikan: Loop retry terus berjalan sampai sukses (tidak di-skip)
             repeat
                 if not playing then break end
 
@@ -277,16 +277,14 @@ local function StartPlayback()
 
                 if not actionSuccess then
                     retryAttempts = retryAttempts + 1
-                    log("PLAY", string.format("⚠️ Aksi [%d/%d] '%s' gagal. Mencoba ulang #%d/%d...", 
-                        i, #recordedActions, act.remoteName, retryAttempts, MAX_RETRIES))
+                    log("PLAY", string.format("⚠️ Aksi [%d/%d] '%s' belum berhasil (Vote/Cooldown/Uang). Mencoba ulang #%d...", 
+                        i, #recordedActions, act.remoteName, retryAttempts))
                     task.wait(0.4 / (currentGameSpeed * playbackSpeed))
                 end
-            until actionSuccess or retryAttempts >= MAX_RETRIES or not playing
+            until actionSuccess or not playing
 
             if actionSuccess then
                 log("PLAY", string.format("✅ [%d/%d] Berhasil: %s", i, #recordedActions, act.remoteName))
-            else
-                log("PLAY", string.format("❌ [%d/%d] Melewati aksi '%s' (Gagal setelah %d percobaan)", i, #recordedActions, act.remoteName, MAX_RETRIES))
             end
         end
 
@@ -658,14 +656,14 @@ end)
 
 --//========== PROSES OTOMATIS SAAT REJOIN / AUTO EXECUTE ==========
 task.spawn(function()
-    task.wait(2)
+    task.wait(3)
     
     if LoadMacroFromFile(currentMacroName) then
         log("INIT", string.format("📂 Makro '%s' berhasil dimuat dari file tersimpan.", currentMacroName))
         
         if autoPlayEnabled then
-            log("AUTOPLAY", "🤖 Auto Play dalam posisi ON. Memulai makro secara otomatis dalam 2 detik...")
-            task.wait(2)
+            log("AUTOPLAY", "🤖 Auto Play ON. Menunggu 8 detik (fase Vote Difficulty)...")
+            task.wait(8) -- Penundaan tambahan agar voting difficulty selesai terlebih dahulu
             StartPlayback()
         end
     else
