@@ -1,6 +1,6 @@
 --//============================================================
 --// ROBLOX MACRO - Fixed Vector3/CFrame Serialization & Remote Support
---// Fitur: Complete Roblox Data Serialization, Auto Rejoin, Multi-Remote, Auto 2x Speed & Auto Skip Wave
+--// Fitur: Complete Roblox Data Serialization, Auto Rejoin, Multi-Remote, Auto 2x Speed
 --//============================================================
 
 local Players           = game:GetService("Players")
@@ -20,7 +20,6 @@ local recording           = false
 local playing             = false
 local autoPlayEnabled     = false
 local auto2xSpeedEnabled  = false
-local autoSkipWaveEnabled = false
 local recordedActions     = {}
 local playbackSpeed       = 1.0
 local currentGameSpeed    = 1.0
@@ -47,42 +46,6 @@ local function GetRemoteByName(name)
         end
     end
     return nil
-end
-
-local cachedSkipRemote = nil
-local function GetSkipRemote()
-    if cachedSkipRemote and cachedSkipRemote.Parent then return cachedSkipRemote end
-    
-    local rs = game:GetService("ReplicatedStorage")
-    local remoteEvents = rs:FindFirstChild("RemoteEvents")
-    if remoteEvents then
-        local remote = remoteEvents:FindFirstChild("SkipWaveVote")
-        if remote then
-            cachedSkipRemote = remote
-            return remote
-        end
-    end
-
-    local found = GetRemoteByName("SkipWaveVote")
-    if found then
-        cachedSkipRemote = found
-        return found
-    end
-
-    return nil
-end
-
-local function SkipWave()
-    pcall(function()
-        local skipRemote = GetSkipRemote()
-        if skipRemote then
-            if skipRemote:IsA("RemoteEvent") then
-                skipRemote:FireServer(1)
-            elseif skipRemote:IsA("RemoteFunction") then
-                skipRemote:InvokeServer(1)
-            end
-        end
-    end)
 end
 
 local function SetGameSpeed(speed)
@@ -185,7 +148,6 @@ local function SaveConfig()
         local cfg = {
             autoPlay         = autoPlayEnabled,
             auto2xSpeed      = auto2xSpeedEnabled,
-            autoSkipWave     = autoSkipWaveEnabled,
             lastMacroName    = currentMacroName,
             playbackSpeed    = playbackSpeed,
             currentGameSpeed = currentGameSpeed
@@ -202,7 +164,6 @@ local function LoadConfig()
         if data then
             if data.autoPlay ~= nil then autoPlayEnabled = data.autoPlay end
             if data.auto2xSpeed ~= nil then auto2xSpeedEnabled = data.auto2xSpeed end
-            if data.autoSkipWave ~= nil then autoSkipWaveEnabled = data.autoSkipWave end
             if data.lastMacroName then currentMacroName = data.lastMacroName end
             if data.playbackSpeed then playbackSpeed = data.playbackSpeed end
             if data.currentGameSpeed then currentGameSpeed = data.currentGameSpeed end
@@ -348,7 +309,7 @@ local function StartPlayback()
 
                 if not actionSuccess then
                     retryAttempts = retryAttempts + 1
-                    log("PLAY", string.format("⚠️️ Aksi [%d/%d] '%s' belum berhasil (Mencoba ulang #%d)...", 
+                    log("PLAY", string.format("⚠ Aksi [%d/%d] '%s' belum berhasil (Mencoba ulang #%d)...", 
                         i, #recordedActions, act.remoteName, retryAttempts))
                     task.wait(0.5 / (currentGameSpeed * playbackSpeed))
                 end
@@ -378,7 +339,7 @@ local function createUI()
     gui.Parent = parent
 
     local main = Instance.new("Frame")
-    main.Size = UDim2.new(0, 300, 0, 345)
+    main.Size = UDim2.new(0, 300, 0, 305)
     main.Position = UDim2.new(0, 20, 0, 100)
     main.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
     main.Active = true
@@ -413,7 +374,7 @@ local function createUI()
     local isMinimized = false
     minBtn.MouseButton1Click:Connect(function()
         isMinimized = not isMinimized
-        local targetSize = isMinimized and UDim2.new(0, 300, 0, 32) or UDim2.new(0, 300, 0, 345)
+        local targetSize = isMinimized and UDim2.new(0, 300, 0, 32) or UDim2.new(0, 300, 0, 305)
         
         TweenService:Create(main, TweenInfo.new(0.25, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
             Size = targetSize
@@ -493,327 +454,3 @@ local function createUI()
 
     local autoPlayBtn = Instance.new("TextButton")
     autoPlayBtn.Size = UDim2.new(1, -20, 0, 32)
-    autoPlayBtn.Position = UDim2.new(0, 10, 0, 166)
-    autoPlayBtn.Font = Enum.Font.GothamBold
-    autoPlayBtn.TextSize = 11
-    autoPlayBtn.Parent = main
-    Instance.new("UICorner", autoPlayBtn).CornerRadius = UDim.new(0, 6)
-
-    local function refreshAutoPlayUI()
-        if autoPlayEnabled then
-            autoPlayBtn.Text = "🤖 AUTO PLAY: ON (Otomatis Rejoin)"
-            autoPlayBtn.BackgroundColor3 = Color3.fromRGB(40, 140, 70)
-            autoPlayBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-        else
-            autoPlayBtn.Text = "🤖 AUTO PLAY: OFF"
-            autoPlayBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 75)
-            autoPlayBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
-        end
-    end
-    refreshAutoPlayUI()
-
-    local speedBtn = Instance.new("TextButton")
-    speedBtn.Size = UDim2.new(0.5, -15, 0, 26)
-    speedBtn.Position = UDim2.new(0, 10, 0, 204)
-    speedBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
-    speedBtn.Text = string.format("🚀 Mult: %.2fx", playbackSpeed)
-    speedBtn.TextColor3 = Color3.fromRGB(220, 220, 230)
-    speedBtn.Font = Enum.Font.GothamBold
-    speedBtn.TextSize = 10
-    speedBtn.Parent = main
-    Instance.new("UICorner", speedBtn).CornerRadius = UDim.new(0, 5)
-
-    local gameSpeedBtn = Instance.new("TextButton")
-    gameSpeedBtn.Size = UDim2.new(0.5, -15, 0, 26)
-    gameSpeedBtn.Position = UDim2.new(0.5, 5, 0, 204)
-    gameSpeedBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
-    gameSpeedBtn.Text = "🎮 Game: " .. tostring(currentGameSpeed) .. "x"
-    gameSpeedBtn.TextColor3 = Color3.fromRGB(220, 220, 230)
-    gameSpeedBtn.Font = Enum.Font.GothamBold
-    gameSpeedBtn.TextSize = 10
-    gameSpeedBtn.Parent = main
-    Instance.new("UICorner", gameSpeedBtn).CornerRadius = UDim.new(0, 5)
-
-    local auto2xBtn = Instance.new("TextButton")
-    auto2xBtn.Size = UDim2.new(1, -20, 0, 26)
-    auto2xBtn.Position = UDim2.new(0, 10, 0, 236)
-    auto2xBtn.Font = Enum.Font.GothamBold
-    auto2xBtn.TextSize = 10
-    auto2xBtn.Parent = main
-    Instance.new("UICorner", auto2xBtn).CornerRadius = UDim.new(0, 5)
-
-    local function refreshAuto2xUI()
-        if auto2xSpeedEnabled then
-            auto2xBtn.Text = "⚡ AUTO 2x GAME SPEED: ON"
-            auto2xBtn.BackgroundColor3 = Color3.fromRGB(40, 140, 70)
-            auto2xBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-        else
-            auto2xBtn.Text = "⚡ AUTO 2x GAME SPEED: OFF"
-            auto2xBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 75)
-            auto2xBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
-        end
-    end
-    refreshAuto2xUI()
-
-    local autoSkipBtn = Instance.new("TextButton")
-    autoSkipBtn.Size = UDim2.new(1, -20, 0, 26)
-    autoSkipBtn.Position = UDim2.new(0, 10, 0, 268)
-    autoSkipBtn.Font = Enum.Font.GothamBold
-    autoSkipBtn.TextSize = 10
-    autoSkipBtn.Parent = main
-    Instance.new("UICorner", autoSkipBtn).CornerRadius = UDim.new(0, 5)
-
-    local function refreshAutoSkipUI()
-        if autoSkipWaveEnabled then
-            autoSkipBtn.Text = "⏩ AUTO SKIP WAVE: ON"
-            autoSkipBtn.BackgroundColor3 = Color3.fromRGB(40, 140, 70)
-            autoSkipBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-        else
-            autoSkipBtn.Text = "⏩ AUTO SKIP WAVE: OFF"
-            autoSkipBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 75)
-            autoSkipBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
-        end
-    end
-    refreshAutoSkipUI()
-
-    local clearBtn = Instance.new("TextButton")
-    clearBtn.Size = UDim2.new(1, -20, 0, 22)
-    clearBtn.Position = UDim2.new(0, 10, 0, 300)
-    clearBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
-    clearBtn.Text = "🗑 Clear Records"
-    clearBtn.TextColor3 = Color3.fromRGB(180, 180, 180)
-    clearBtn.Font = Enum.Font.Gotham
-    clearBtn.TextSize = 10
-    clearBtn.Parent = main
-    Instance.new("UICorner", clearBtn).CornerRadius = UDim.new(0, 5)
-
-    local function updateStatus()
-        local txt = "Idle"
-        if recording then txt = "🔴 Recording"
-        elseif playing then 
-            txt = "🟢 Playing" 
-            playBtn.Text = "⏹ STOP"
-            playBtn.BackgroundColor3 = Color3.fromRGB(110, 30, 30)
-        else
-            playBtn.Text = "▶ PLAY"
-            playBtn.BackgroundColor3 = Color3.fromRGB(50, 160, 80)
-        end
-        status.Text = string.format("Status: %s | Actions: %d", txt, #recordedActions)
-        gameSpeedBtn.Text = string.format("🎮 Game: %.1fx", currentGameSpeed)
-    end
-
-    recBtn.MouseButton1Click:Connect(function()
-        if recording then
-            recording = false
-            recBtn.Text = "⏺ RECORD"
-            recBtn.BackgroundColor3 = Color3.fromRGB(190, 50, 50)
-            log("RECORD", string.format("⏹ Record selesai. Total %d aksi berhasil terekam.", #recordedActions))
-            
-            SaveMacroToFile(currentMacroName)
-        else
-            if playing then return end
-            recordedActions = {}
-            recordGameTime  = 0
-            lastRecordTick  = tick()
-            recording       = true
-            recBtn.Text     = "⏹ STOP"
-            recBtn.BackgroundColor3 = Color3.fromRGB(110, 30, 30)
-            log("RECORD", "▶ Recording dimulai...")
-        end
-        updateStatus()
-    end)
-
-    playBtn.MouseButton1Click:Connect(function()
-        if playing then
-            playing = false
-            updateStatus()
-            log("PLAY", "⏹ Playback dihentikan.")
-        else
-            StartPlayback()
-        end
-    end)
-
-    autoPlayBtn.MouseButton1Click:Connect(function()
-        autoPlayEnabled = not autoPlayEnabled
-        refreshAutoPlayUI()
-        SaveConfig()
-
-        if autoPlayEnabled then
-            log("AUTOPLAY", "✅ Auto Play diaktifkan.")
-            if #recordedActions == 0 then
-                LoadMacroFromFile(currentMacroName)
-            end
-            if not playing and #recordedActions > 0 then
-                StartPlayback()
-            end
-        else
-            log("AUTOPLAY", "⏹ Auto Play dimatikan.")
-        end
-    end)
-
-    auto2xBtn.MouseButton1Click:Connect(function()
-        auto2xSpeedEnabled = not auto2xSpeedEnabled
-        refreshAuto2xUI()
-        SaveConfig()
-
-        if auto2xSpeedEnabled then
-            SetGameSpeed(2.0)
-            log("SPEED", "⚡ Auto 2x Game Speed diaktifkan.")
-        else
-            log("SPEED", "⏹ Auto 2x Game Speed dimatikan.")
-        end
-    end)
-
-    autoSkipBtn.MouseButton1Click:Connect(function()
-        autoSkipWaveEnabled = not autoSkipWaveEnabled
-        refreshAutoSkipUI()
-        SaveConfig()
-
-        if autoSkipWaveEnabled then
-            SkipWave()
-            log("SKIP", "⏩ Auto Skip Wave diaktifkan.")
-        else
-            log("SKIP", "⏹ Auto Skip Wave dimatikan.")
-        end
-    end)
-
-    saveBtn.MouseButton1Click:Connect(function()
-        SaveMacroToFile(currentMacroName)
-    end)
-
-    loadBtn.MouseButton1Click:Connect(function()
-        if LoadMacroFromFile(currentMacroName) then
-            updateStatus()
-            if autoPlayEnabled and not playing then
-                StartPlayback()
-            end
-        end
-    end)
-
-    local macroSpeeds = {1.0, 1.25, 1.5, 2.0}
-    local macroSpeedIdx = 1
-    speedBtn.MouseButton1Click:Connect(function()
-        macroSpeedIdx = (macroSpeedIdx % #macroSpeeds) + 1
-        playbackSpeed = macroSpeeds[macroSpeedIdx]
-        speedBtn.Text = string.format("🚀 Mult: %.2fx", playbackSpeed)
-        SaveConfig()
-    end)
-
-    local gameSpeeds = {1.0, 1.5, 2.0}
-    local gameSpeedIdx = 1
-    gameSpeedBtn.MouseButton1Click:Connect(function()
-        gameSpeedIdx = (gameSpeedIdx % #gameSpeeds) + 1
-        local newSpd = gameSpeeds[gameSpeedIdx]
-        SetGameSpeed(newSpd)
-        SaveConfig()
-        updateStatus()
-    end)
-
-    clearBtn.MouseButton1Click:Connect(function()
-        if recording or playing then return end
-        recordedActions = {}
-        updateStatus()
-        log("UI", "Record dibersihkan.")
-    end)
-
-    task.spawn(function()
-        while gui and gui.Parent do
-            updateStatus()
-            task.wait(0.5)
-        end
-    end)
-end
-
-createUI()
-
---//========== LOOP BACKGROUND AUTO SKIP WAVE ==========
-task.spawn(function()
-    while true do
-        if autoSkipWaveEnabled then
-            SkipWave()
-        end
-        task.wait(1)
-    end
-end)
-
---//========== HOOK INTERCEPTOR AUTOMATIS (FIRE & INVOKE SUPPORT) ==========
-task.spawn(function()
-    local oldNamecall
-    oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
-        local method = getnamecallmethod()
-        local args = {...}
-
-        if (method == "FireServer" or method == "fireServer") and self.Name == "SetGameSpeed" then
-            if type(args[1]) == "number" then
-                currentGameSpeed = args[1]
-                log("GAME", string.format("Terdeteksi perubahan kecepatan game: x%.1f", currentGameSpeed))
-            end
-        end
-
-        if recording and typeof(self) == "Instance" and TARGET_REMOTES[self.Name] then
-            if method == "InvokeServer" or method == "invokeServer" or method == "FireServer" or method == "fireServer" then
-                local results = { oldNamecall(self, ...) }
-                local res = results[1]
-
-                local isSuccess = true
-                if res == false or (type(res) == "table" and res.Success == false) then
-                    isSuccess = false
-                end
-
-                if isSuccess then
-                    local now = tick()
-                    local dt = now - lastRecordTick
-                    lastRecordTick = now
-
-                    recordGameTime = recordGameTime + (dt * currentGameSpeed)
-                    local currentT = recordGameTime
-
-                    task.spawn(function()
-                        pcall(function()
-                            local sArgs = SerializeArgs(args)
-                            table.insert(recordedActions, {
-                                remote      = self,
-                                remoteName  = self.Name,
-                                remoteClass = self.ClassName,
-                                args        = sArgs,
-                                gameTime    = currentT
-                            })
-                            log("RECORD", string.format("#%d Terekam: '%s' (%s) | T_game=%.2fs", 
-                                #recordedActions, self.Name, self.ClassName, currentT))
-                        end)
-                    end)
-                else
-                    log("RECORD", string.format("⚠️ Aksi '%s' diabaikan karena gagal di server.", self.Name))
-                end
-
-                return unpack(results)
-            end
-        end
-
-        return oldNamecall(self, ...)
-    end))
-end)
-
---//========== PROSES OTOMATIS SAAT REJOIN / AUTO EXECUTE ==========
-task.spawn(function()
-    task.wait(3)
-    
-    if auto2xSpeedEnabled then
-        SetGameSpeed(2.0)
-    end
-
-    if LoadMacroFromFile(currentMacroName) then
-        log("INIT", string.format("📂 Makro '%s' berhasil dimuat dari file tersimpan.", currentMacroName))
-        
-        if autoPlayEnabled then
-            log("AUTOPLAY", "🤖 Auto Play ON. Menunggu 8 detik (fase Vote Difficulty)...")
-            task.wait(8)
-            if auto2xSpeedEnabled then
-                SetGameSpeed(2.0)
-            end
-            StartPlayback()
-        end
-    else
-        log("INIT", "ℹ️ Belum ada makro tersimpan yang ditemukan. Silakan rekam makro baru.")
-    end
-end)
