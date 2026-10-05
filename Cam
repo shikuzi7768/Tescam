@@ -1,6 +1,6 @@
 --//============================================================
 --// ROBLOX MACRO - Auto Save Rejoin, Persistent Config & Auto Play
---// Fitur: Permanent Auto-Save, Auto Play on Rejoin, Strict Retry, UI Minimize, Initial Spawn Buffer
+--// Fitur: Permanent Auto-Save, Auto Play on Rejoin, Strict Retry, UI Minimize, Start Delay
 --//============================================================
 
 local Players           = game:GetService("Players")
@@ -24,8 +24,8 @@ local autoPlayEnabled    = false
 local recordedActions    = {}
 local playbackSpeed      = 1.0
 local currentGameSpeed   = 1.0
+local startDelay         = 6.0 -- Delay sebelum playback dimulai (menunggu vote/loading selesai)
 local currentMacroName   = "Makro 1"
-local INITIAL_BUFFER_TIME = 8 -- Waktu tunggu awal (detik) untuk vote difficulty / spawn match
 
 local recordGameTime     = 0
 local lastRecordTick     = 0
@@ -133,7 +133,8 @@ local function SaveConfig()
             autoPlay         = autoPlayEnabled,
             lastMacroName    = currentMacroName,
             playbackSpeed    = playbackSpeed,
-            currentGameSpeed = currentGameSpeed
+            currentGameSpeed = currentGameSpeed,
+            startDelay       = startDelay
         }
         writefile(CONFIG_FILE, HttpService:JSONEncode(cfg))
         log("CONFIG", "💾 Konfigurasi makro berhasil diperbarui.")
@@ -143,12 +144,13 @@ end
 local function LoadConfig()
     if not readfile or not isfile or not isfile(CONFIG_FILE) then return end
     pcall(function()
-        local data = HttpService:JSONEncode(readfile(CONFIG_FILE))
+        local data = HttpService:JSONDecode(readfile(CONFIG_FILE))
         if data then
             if data.autoPlay ~= nil then autoPlayEnabled = data.autoPlay end
             if data.lastMacroName then currentMacroName = data.lastMacroName end
             if data.playbackSpeed then playbackSpeed = data.playbackSpeed end
             if data.currentGameSpeed then currentGameSpeed = data.currentGameSpeed end
+            if data.startDelay then startDelay = data.startDelay end
             log("CONFIG", "📂 Konfigurasi tersimpan berhasil dimuat.")
         end
     end)
@@ -222,17 +224,18 @@ local function StartPlayback()
     playing = true
 
     task.spawn(function()
-        log("PLAY", string.format("▶ Memulai '%s' [Strict Sequential & Retry Active]...", currentMacroName))
-        log("PLAY", string.format("⏳ Menunggu buffer awal (%d detik) untuk vote difficulty & spawn match...", INITIAL_BUFFER_TIME))
+        log("PLAY", string.format("▶ Memulai '%s' [Start Delay: %.1fs]...", currentMacroName, startDelay))
 
-        -- Buffer tunggu awal agar match & map dimuat sepenuhnya
-        local bufferStart = tick()
-        while playing and (tick() - bufferStart) < INITIAL_BUFFER_TIME do
-            task.wait(0.1)
+        -- Jeda awal untuk menunggu proses vote difficulty / loading selesai
+        if startDelay > 0 then
+            local delayRemaining = startDelay
+            while delayRemaining > 0 and playing do
+                task.wait(0.5)
+                delayRemaining = delayRemaining - 0.5
+            end
         end
 
         if not playing then return end
-        log("PLAY", "🚀 Buffer awal selesai. Memulai penempatan tower...")
 
         local playElapsedGameTime = 0
         local lastPlayTick = tick()
@@ -242,6 +245,7 @@ local function StartPlayback()
 
             local targetGameTime = act.gameTime
 
+            -- 1. Menunggu hingga mencapai durasi waktu rekaman yang tepat
             while playing do
                 local now = tick()
                 local dt = now - lastPlayTick
@@ -259,6 +263,7 @@ local function StartPlayback()
 
             if not playing then break end
 
+            -- 2. Eksekusi Remote dan Ulangi Jika Gagal (Retry)
             local actionSuccess = false
             local retryAttempts = 0
 
@@ -288,11 +293,14 @@ local function StartPlayback()
 
                 if not actionSuccess then
                     retryAttempts = retryAttempts + 1
-                    log("PLAY", string.format("⚠️ Aksi [%d/%d] '%s' gagal (cash belum cukup/posisi). Mencoba ulang #%d...", 
+                    log("PLAY", string.format("⚠️ Aksi [%d/%d] '%s' belum berhasil. Percobaan ulang #%d...", 
                         i, #recordedActions, act.remoteName, retryAttempts))
                     task.wait(0.4 / (currentGameSpeed * playbackSpeed))
                 end
             until actionSuccess or not playing
+
+            -- PERBAIKAN UTAMA: Reset tick setelah retry selesai agar durasi retry tidak merusak waktu aksi berikutnya!
+            lastPlayTick = tick()
 
             if actionSuccess then
                 log("PLAY", string.format("✅ [%d/%d] Berhasil: %s", i, #recordedActions, act.remoteName))
@@ -318,7 +326,7 @@ local function createUI()
     gui.Parent = parent
 
     local main = Instance.new("Frame")
-    main.Size = UDim2.new(0, 300, 0, 280)
+    main.Size = UDim2.new(0, 300, 0, 310)
     main.Position = UDim2.new(0, 20, 0, 100)
     main.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
     main.Active = true
@@ -354,7 +362,7 @@ local function createUI()
     local isMinimized = false
     minBtn.MouseButton1Click:Connect(function()
         isMinimized = not isMinimized
-        local targetSize = isMinimized and UDim2.new(0, 300, 0, 32) or UDim2.new(0, 300, 0, 280)
+        local targetSize = isMinimized and UDim2.new(0, 300, 0, 32) or UDim2.new(0, 300, 0, 310)
         
         TweenService:Create(main, TweenInfo.new(0.25, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
             Size = targetSize
@@ -409,4 +417,279 @@ local function createUI()
     playBtn.Text = "▶ PLAY"
     playBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     playBtn.Font = Enum.Font.GothamBold
-    playBtn.Parent
+    playBtn.Parent = main
+    Instance.new("UICorner", playBtn).CornerRadius = UDim.new(0, 6)
+
+    -- Tombol Save & Load
+    local saveBtn = Instance.new("TextButton")
+    saveBtn.Size = UDim2.new(0.5, -15, 0, 30)
+    saveBtn.Position = UDim2.new(0, 10, 0, 130)
+    saveBtn.BackgroundColor3 = Color3.fromRGB(40, 90, 150)
+    saveBtn.Text = "💾 SAVE PROFILE"
+    saveBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    saveBtn.Font = Enum.Font.GothamBold
+    saveBtn.TextSize = 10
+    saveBtn.Parent = main
+    Instance.new("UICorner", saveBtn).CornerRadius = UDim.new(0, 5)
+
+    local loadBtn = Instance.new("TextButton")
+    loadBtn.Size = UDim2.new(0.5, -15, 0, 30)
+    loadBtn.Position = UDim2.new(0.5, 5, 0, 130)
+    loadBtn.BackgroundColor3 = Color3.fromRGB(140, 90, 30)
+    loadBtn.Text = "📂 LOAD PROFILE"
+    loadBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    loadBtn.Font = Enum.Font.GothamBold
+    loadBtn.TextSize = 10
+    loadBtn.Parent = main
+    Instance.new("UICorner", loadBtn).CornerRadius = UDim.new(0, 5)
+
+    -- Tombol Auto Play Toggle
+    local autoPlayBtn = Instance.new("TextButton")
+    autoPlayBtn.Size = UDim2.new(1, -20, 0, 32)
+    autoPlayBtn.Position = UDim2.new(0, 10, 0, 166)
+    autoPlayBtn.Font = Enum.Font.GothamBold
+    autoPlayBtn.TextSize = 11
+    autoPlayBtn.Parent = main
+    Instance.new("UICorner", autoPlayBtn).CornerRadius = UDim.new(0, 6)
+
+    local function refreshAutoPlayUI()
+        if autoPlayEnabled then
+            autoPlayBtn.Text = "🤖 AUTO PLAY: ON (Otomatis Rejoin)"
+            autoPlayBtn.BackgroundColor3 = Color3.fromRGB(40, 140, 70)
+            autoPlayBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        else
+            autoPlayBtn.Text = "🤖 AUTO PLAY: OFF"
+            autoPlayBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 75)
+            autoPlayBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+        end
+    end
+    refreshAutoPlayUI()
+
+    -- Speed Controls & Delay Settings
+    local speedBtn = Instance.new("TextButton")
+    speedBtn.Size = UDim2.new(0.32, -5, 0, 26)
+    speedBtn.Position = UDim2.new(0, 10, 0, 204)
+    speedBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
+    speedBtn.Text = string.format("🚀 Mult: %.2fx", playbackSpeed)
+    speedBtn.TextColor3 = Color3.fromRGB(220, 220, 230)
+    speedBtn.Font = Enum.Font.GothamBold
+    speedBtn.TextSize = 9
+    speedBtn.Parent = main
+    Instance.new("UICorner", speedBtn).CornerRadius = UDim.new(0, 5)
+
+    local gameSpeedBtn = Instance.new("TextButton")
+    gameSpeedBtn.Size = UDim2.new(0.32, -5, 0, 26)
+    gameSpeedBtn.Position = UDim2.new(0.34, 3, 0, 204)
+    gameSpeedBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
+    gameSpeedBtn.Text = "🎮 Game: " .. tostring(currentGameSpeed) .. "x"
+    gameSpeedBtn.TextColor3 = Color3.fromRGB(220, 220, 230)
+    gameSpeedBtn.Font = Enum.Font.GothamBold
+    gameSpeedBtn.TextSize = 9
+    gameSpeedBtn.Parent = main
+    Instance.new("UICorner", gameSpeedBtn).CornerRadius = UDim.new(0, 5)
+
+    local delayBtn = Instance.new("TextButton")
+    delayBtn.Size = UDim2.new(0.34, -5, 0, 26)
+    delayBtn.Position = UDim2.new(0.67, 0, 0, 204)
+    delayBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
+    delayBtn.Text = string.format("⏳ Delay: %.0fs", startDelay)
+    delayBtn.TextColor3 = Color3.fromRGB(220, 220, 230)
+    delayBtn.Font = Enum.Font.GothamBold
+    delayBtn.TextSize = 9
+    delayBtn.Parent = main
+    Instance.new("UICorner", delayBtn).CornerRadius = UDim.new(0, 5)
+
+    -- Tombol Clear
+    local clearBtn = Instance.new("TextButton")
+    clearBtn.Size = UDim2.new(1, -20, 0, 22)
+    clearBtn.Position = UDim2.new(0, 10, 0, 236)
+    clearBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+    clearBtn.Text = "🗑 Clear Records"
+    clearBtn.TextColor3 = Color3.fromRGB(180, 180, 180)
+    clearBtn.Font = Enum.Font.Gotham
+    clearBtn.TextSize = 10
+    clearBtn.Parent = main
+    Instance.new("UICorner", clearBtn).CornerRadius = UDim.new(0, 5)
+
+    local function updateStatus()
+        local txt = "Idle"
+        if recording then txt = "🔴 Recording"
+        elseif playing then 
+            txt = "🟢 Playing" 
+            playBtn.Text = "⏹ STOP"
+            playBtn.BackgroundColor3 = Color3.fromRGB(110, 30, 30)
+        else
+            playBtn.Text = "▶ PLAY"
+            playBtn.BackgroundColor3 = Color3.fromRGB(50, 160, 80)
+        end
+        status.Text = string.format("Status: %s | Actions: %d", txt, #recordedActions)
+        gameSpeedBtn.Text = string.format("🎮 Game: %.1fx", currentGameSpeed)
+    end
+
+    recBtn.MouseButton1Click:Connect(function()
+        if recording then
+            recording = false
+            recBtn.Text = "⏺ RECORD"
+            recBtn.BackgroundColor3 = Color3.fromRGB(190, 50, 50)
+            log("RECORD", string.format("⏹ Record selesai. Total %d aksi.", #recordedActions))
+            
+            SaveMacroToFile(currentMacroName)
+        else
+            if playing then return end
+            recordedActions = {}
+            recordGameTime  = 0
+            lastRecordTick  = tick()
+            recording       = true
+            recBtn.Text     = "⏹ STOP"
+            recBtn.BackgroundColor3 = Color3.fromRGB(110, 30, 30)
+            log("RECORD", "▶ Recording dimulai...")
+        end
+        updateStatus()
+    end)
+
+    playBtn.MouseButton1Click:Connect(function()
+        if playing then
+            playing = false
+            updateStatus()
+            log("PLAY", "⏹ Playback dihentikan.")
+        else
+            StartPlayback()
+        end
+    end)
+
+    autoPlayBtn.MouseButton1Click:Connect(function()
+        autoPlayEnabled = not autoPlayEnabled
+        refreshAutoPlayUI()
+        SaveConfig()
+
+        if autoPlayEnabled then
+            log("AUTOPLAY", "✅ Auto Play diaktifkan. Makro akan otomatis jalan saat Rejoin!")
+            if #recordedActions == 0 then
+                LoadMacroFromFile(currentMacroName)
+            end
+            if not playing and #recordedActions > 0 then
+                StartPlayback()
+            end
+        else
+            log("AUTOPLAY", "⏹ Auto Play dimatikan.")
+        end
+    end)
+
+    saveBtn.MouseButton1Click:Connect(function()
+        SaveMacroToFile(currentMacroName)
+    end)
+
+    loadBtn.MouseButton1Click:Connect(function()
+        if LoadMacroFromFile(currentMacroName) then
+            updateStatus()
+            if autoPlayEnabled and not playing then
+                StartPlayback()
+            end
+        end
+    end)
+
+    local macroSpeeds = {1.0, 1.25, 1.5, 2.0}
+    local macroSpeedIdx = 1
+    speedBtn.MouseButton1Click:Connect(function()
+        macroSpeedIdx = (macroSpeedIdx % #macroSpeeds) + 1
+        playbackSpeed = macroSpeeds[macroSpeedIdx]
+        speedBtn.Text = string.format("🚀 Mult: %.2fx", playbackSpeed)
+        SaveConfig()
+    end)
+
+    local gameSpeeds = {1.0, 1.5, 2.0}
+    local gameSpeedIdx = 1
+    gameSpeedBtn.MouseButton1Click:Connect(function()
+        gameSpeedIdx = (gameSpeedIdx % #gameSpeeds) + 1
+        local newSpd = gameSpeeds[gameSpeedIdx]
+        SetGameSpeed(newSpd)
+        SaveConfig()
+        updateStatus()
+    end)
+
+    local startDelays = {0, 3, 6, 8, 10}
+    local startDelayIdx = 3
+    delayBtn.MouseButton1Click:Connect(function()
+        startDelayIdx = (startDelayIdx % #startDelays) + 1
+        startDelay = startDelays[startDelayIdx]
+        delayBtn.Text = string.format("⏳ Delay: %.0fs", startDelay)
+        SaveConfig()
+    end)
+
+    clearBtn.MouseButton1Click:Connect(function()
+        if recording or playing then return end
+        recordedActions = {}
+        updateStatus()
+        log("UI", "Record dibersihkan.")
+    end)
+
+    task.spawn(function()
+        while gui and gui.Parent do
+            updateStatus()
+            task.wait(0.5)
+        end
+    end)
+end
+
+createUI()
+
+--//========== HOOK INTERCEPTOR AUTOMATIS ==========
+task.spawn(function()
+    local oldNamecall
+    oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+        local method = getnamecallmethod()
+
+        if (method == "FireServer" or method == "fireServer") and self.Name == "SetGameSpeed" then
+            local args = {...}
+            if type(args[1]) == "number" then
+                currentGameSpeed = args[1]
+                log("GAME", string.format("Terdeteksi perubahan kecepatan game: x%.1f", currentGameSpeed))
+            end
+        end
+
+        if recording and typeof(self) == "Instance" and (method == "InvokeServer" or method == "invokeServer") then
+            if TARGET_REMOTES[self.Name] then
+                local args = {...}
+                local now = tick()
+                local dt = now - lastRecordTick
+                lastRecordTick = now
+
+                recordGameTime = recordGameTime + (dt * currentGameSpeed)
+
+                local currentT = recordGameTime
+
+                task.spawn(function()
+                    pcall(function()
+                        local sArgs = SerializeArgs(args)
+                        table.insert(recordedActions, {
+                            remote     = self,
+                            remoteName = self.Name,
+                            args       = sArgs,
+                            gameTime   = currentT
+                        })
+                        log("RECORD", string.format("#%d Terekam: '%s' | T_game=%.2fs", 
+                            #recordedActions, self.Name, currentT))
+                    end)
+                end)
+            end
+        end
+
+        return oldNamecall(self, ...)
+    end))
+end)
+
+--//========== PROSES OTOMATIS SAAT REJOIN / AUTO EXECUTE ==========
+task.spawn(function()
+    task.wait(2) -- Beri waktu game loading komponen dasar
+    
+    if LoadMacroFromFile(currentMacroName) then
+        log("INIT", string.format("📂 Makro '%s' berhasil dimuat dari file tersimpan.", currentMacroName))
+        
+        if autoPlayEnabled then
+            log("AUTOPLAY", string.format("🤖 Auto Play ON. Memulai makro (Start Delay: %.1fs)...", startDelay))
+            StartPlayback()
+        end
+    else
+        log("INIT", "ℹ️ Belum ada makro tersimpan yang ditemukan. Silakan rekam makro baru.")
+    end
+end)
