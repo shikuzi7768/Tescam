@@ -16,18 +16,18 @@ local TARGET_REMOTES = {
     ["SellTower"]    = true
 }
 
-local recording          = false
-local playing            = false
-local autoPlayEnabled    = false
-local auto2xSpeedEnabled = false
+local recording           = false
+local playing             = false
+local autoPlayEnabled     = false
+local auto2xSpeedEnabled  = false
 local autoSkipWaveEnabled = false
-local recordedActions    = {}
-local playbackSpeed      = 1.0
-local currentGameSpeed   = 1.0
-local currentMacroName   = "Makro 1"
+local recordedActions     = {}
+local playbackSpeed       = 1.0
+local currentGameSpeed    = 1.0
+local currentMacroName    = "Makro 1"
 
-local recordGameTime     = 0
-local lastRecordTick     = 0
+local recordGameTime      = 0
+local lastRecordTick      = 0
 
 local CONFIG_FILE = "TD_Macro_Config.json"
 
@@ -49,22 +49,49 @@ local function GetRemoteByName(name)
     return nil
 end
 
-local function SetGameSpeed(speed)
-    currentGameSpeed = speed
-    pcall(function()
-        local speedRemote = ReplicatedStorage:FindFirstChild("RemoteEvents") and ReplicatedStorage.RemoteEvents:FindFirstChild("SetGameSpeed")
-        if speedRemote then
-            speedRemote:FireServer(speed)
-            log("GAME", string.format("⚡ Kecepatan game diatur ke x%.1f", speed))
+local cachedSkipRemote = nil
+local function GetSkipRemote()
+    if cachedSkipRemote and cachedSkipRemote.Parent then return cachedSkipRemote end
+    
+    local rs = game:GetService("ReplicatedStorage")
+    local remoteEvents = rs:FindFirstChild("RemoteEvents")
+    if remoteEvents then
+        local remote = remoteEvents:FindFirstChild("SkipWaveVote")
+        if remote then
+            cachedSkipRemote = remote
+            return remote
         end
-    end)
+    end
+
+    local found = GetRemoteByName("SkipWaveVote")
+    if found then
+        cachedSkipRemote = found
+        return found
+    end
+
+    return nil
 end
 
 local function SkipWave()
     pcall(function()
-        local skipRemote = ReplicatedStorage:FindFirstChild("RemoteEvents") and ReplicatedStorage.RemoteEvents:FindFirstChild("SkipWaveVote")
+        local skipRemote = GetSkipRemote()
         if skipRemote then
-            skipRemote:FireServer(1)
+            if skipRemote:IsA("RemoteEvent") then
+                skipRemote:FireServer(1)
+            elseif skipRemote:IsA("RemoteFunction") then
+                skipRemote:InvokeServer(1)
+            end
+        end
+    end)
+end
+
+local function SetGameSpeed(speed)
+    currentGameSpeed = speed
+    pcall(function()
+        local speedRemote = ReplicatedStorage:FindFirstChild("RemoteEvents") and ReplicatedStorage.RemoteEvents:FindFirstChild("SetGameSpeed") or GetRemoteByName("SetGameSpeed")
+        if speedRemote then
+            speedRemote:FireServer(speed)
+            log("GAME", string.format("⚡ Kecepatan game diatur ke x%.1f", speed))
         end
     end)
 end
@@ -321,7 +348,7 @@ local function StartPlayback()
 
                 if not actionSuccess then
                     retryAttempts = retryAttempts + 1
-                    log("PLAY", string.format("⚠️ Aksi [%d/%d] '%s' belum berhasil (Mencoba ulang #%d)...", 
+                    log("PLAY", string.format("⚠️️ Aksi [%d/%d] '%s' belum berhasil (Mencoba ulang #%d)...", 
                         i, #recordedActions, act.remoteName, retryAttempts))
                     task.wait(0.5 / (currentGameSpeed * playbackSpeed))
                 end
@@ -705,7 +732,7 @@ task.spawn(function()
         if autoSkipWaveEnabled then
             SkipWave()
         end
-        task.wait(1.5)
+        task.wait(1)
     end
 end)
 
