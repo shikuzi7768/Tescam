@@ -1,6 +1,6 @@
 --//============================================================
---// ROBLOX MACRO - Auto Save Rejoin, Persistent Config & Auto Play
---// Fitur: Permanent Auto-Save, Auto Play on Rejoin, Infinite Retry (No Skip)
+--// ROBLOX MACRO - Fixed Vector3/CFrame Serialization & Remote Support
+--// Fitur: Complete Roblox Data Serialization, Auto Rejoin & Multi-Remote
 --//============================================================
 
 local Players           = game:GetService("Players")
@@ -10,7 +10,6 @@ local TweenService      = game:GetService("TweenService")
 
 local LocalPlayer = Players.LocalPlayer
 
--- Target RemoteFunctions & RemoteEvents (Hanya remote eksekusi aksi)
 local TARGET_REMOTES = {
     ["PlaceTower"]   = true,
     ["UpgradeTower"] = true,
@@ -34,13 +33,11 @@ local function log(tag, msg)
     print(string.format("[%s][MACRO][%s] %s", os.date("%H:%M:%S"), tag, msg))
 end
 
--- Format nama file profil
 local function GetFileName(profileName)
     local cleanName = string.gsub(profileName, "[%s%c%p]", "_")
     return "TD_Macro_" .. cleanName .. ".json"
 end
 
---//========== MENCARI REMOTE DENGAN NAMA ==========
 local function GetRemoteByName(name)
     for _, v in ipairs(game:GetDescendants()) do
         if v.Name == name and (v:IsA("RemoteFunction") or v:IsA("RemoteEvent")) then
@@ -50,7 +47,6 @@ local function GetRemoteByName(name)
     return nil
 end
 
---//========== PENGATUR KECEPATAN GAME ==========
 local function SetGameSpeed(speed)
     currentGameSpeed = speed
     pcall(function()
@@ -62,63 +58,84 @@ local function SetGameSpeed(speed)
     end)
 end
 
---//========== SERIALISASI DATA ==========
+--//========== SERIALISASI TIPE DATA ROBLOX (VECTOR3, CFRAME, INSTANCE, ENUM) ==========
+local function SerializeVal(v)
+    local t = typeof(v)
+    if t == "Instance" then
+        return { __type = "Instance", path = v:GetFullName(), name = v.Name }
+    elseif t == "Vector3" then
+        return { __type = "Vector3", x = v.X, y = v.Y, z = v.Z }
+    elseif t == "CFrame" then
+        return { __type = "CFrame", components = { v:GetComponents() } }
+    elseif t == "Color3" then
+        return { __type = "Color3", r = v.R, g = v.G, b = v.B }
+    elseif t == "Vector2" then
+        return { __type = "Vector2", x = v.X, y = v.Y }
+    elseif t == "EnumItem" then
+        return { __type = "EnumItem", enum = tostring(v.EnumType), item = v.Name }
+    elseif t == "table" then
+        local tCopy = {}
+        for k, val in pairs(v) do
+            tCopy[k] = SerializeVal(val)
+        end
+        return tCopy
+    else
+        return v
+    end
+end
+
 local function SerializeArgs(args)
     local serialized = {}
     for i, v in ipairs(args) do
-        if typeof(v) == "Instance" then
-            serialized[i] = {
-                __type = "Instance",
-                path   = v:GetFullName(),
-                name   = v.Name
-            }
-        elseif type(v) == "table" then
-            local tCopy = {}
-            for k, val in pairs(v) do
-                if typeof(val) == "Instance" then
-                    tCopy[k] = { __type = "Instance", path = val:GetFullName(), name = val.Name }
-                else
-                    tCopy[k] = val
-                end
-            end
-            serialized[i] = tCopy
-        else
-            serialized[i] = v
-        end
+        serialized[i] = SerializeVal(v)
     end
     return serialized
 end
 
-local function ResolveInstance(data)
-    if type(data) == "table" and data.__type == "Instance" then
-        local obj = workspace
-        for segment in string.gmatch(data.path, "[^.]+") do
-            if segment ~= "Workspace" and segment ~= "game" then
-                obj = obj:FindFirstChild(segment)
-                if not obj then break end
-            end
+local function ResolveInstance(path, name)
+    local obj = workspace
+    for segment in string.gmatch(path or "", "[^.]+") do
+        if segment ~= "Workspace" and segment ~= "game" then
+            obj = obj:FindFirstChild(segment)
+            if not obj then break end
         end
-        return obj or workspace:FindFirstChild(data.name, true)
     end
-    return data
+    return obj or workspace:FindFirstChild(name or "", true)
+end
+
+local function DeserializeVal(v)
+    if type(v) == "table" then
+        if v.__type == "Instance" then
+            return ResolveInstance(v.path, v.name)
+        elseif v.__type == "Vector3" then
+            return Vector3.new(v.x or 0, v.y or 0, v.z or 0)
+        elseif v.__type == "CFrame" and v.components then
+            return CFrame.new(unpack(v.components))
+        elseif v.__type == "Color3" then
+            return Color3.new(v.r or 0, v.g or 0, v.b or 0)
+        elseif v.__type == "Vector2" then
+            return Vector2.new(v.x or 0, v.y or 0)
+        elseif v.__type == "EnumItem" then
+            local enumGroup = Enum[v.enum]
+            if enumGroup and enumGroup[v.item] then
+                return enumGroup[v.item]
+            end
+            return nil
+        else
+            local tCopy = {}
+            for k, val in pairs(v) do
+                tCopy[k] = DeserializeVal(val)
+            end
+            return tCopy
+        end
+    end
+    return v
 end
 
 local function DeserializeArgs(args)
     local deserialized = {}
     for i, v in ipairs(args) do
-        if type(v) == "table" then
-            if v.__type == "Instance" then
-                deserialized[i] = ResolveInstance(v)
-            else
-                local tCopy = {}
-                for k, val in pairs(v) do
-                    tCopy[k] = ResolveInstance(v)
-                end
-                deserialized[i] = tCopy
-            end
-        else
-            deserialized[i] = v
-        end
+        deserialized[i] = DeserializeVal(v)
     end
     return deserialized
 end
@@ -164,9 +181,10 @@ local function SaveMacroToFile(name)
     local cleanActions = {}
     for _, act in ipairs(recordedActions) do
         table.insert(cleanActions, {
-            remoteName = act.remoteName,
-            args       = act.args,
-            gameTime   = act.gameTime
+            remoteName  = act.remoteName,
+            remoteClass = act.remoteClass,
+            args        = act.args,
+            gameTime    = act.gameTime
         })
     end
 
@@ -200,10 +218,11 @@ local function LoadMacroFromFile(name)
         recordedActions = {}
         for _, act in ipairs(parsedData) do
             table.insert(recordedActions, {
-                remote     = GetRemoteByName(act.remoteName),
-                remoteName = act.remoteName,
-                args       = act.args,
-                gameTime   = act.gameTime or act.time or 0
+                remote      = GetRemoteByName(act.remoteName),
+                remoteName  = act.remoteName,
+                remoteClass = act.remoteClass,
+                args        = act.args,
+                gameTime    = act.gameTime or act.time or 0
             })
         end
         log("LOAD", string.format("📂 Profil '%s' dimuat (%d aksi)", name, #recordedActions))
@@ -220,7 +239,7 @@ local function StartPlayback()
     playing = true
 
     task.spawn(function()
-        log("PLAY", string.format("▶ Memulai '%s' [Strict Sequential & Continuous Retry Active]...", currentMacroName))
+        log("PLAY", string.format("▶ Memulai '%s' [Strict Sequential & Extended Retry]...", currentMacroName))
 
         local playElapsedGameTime = 0
         local lastPlayTick = tick()
@@ -250,7 +269,6 @@ local function StartPlayback()
             local actionSuccess = false
             local retryAttempts = 0
 
-            -- Perbaikan: Loop retry terus berjalan sampai sukses (tidak di-skip)
             repeat
                 if not playing then break end
 
@@ -258,28 +276,35 @@ local function StartPlayback()
                 if remoteObj then
                     local realArgs = DeserializeArgs(act.args)
                     
-                    local ok, response = pcall(function()
-                        return remoteObj:InvokeServer(unpack(realArgs))
-                    end)
+                    local isEvent = remoteObj:IsA("RemoteEvent") or act.remoteClass == "RemoteEvent"
+                    local ok, response
 
-                    if ok then
-                        if response == false then
-                            actionSuccess = false
-                        elseif type(response) == "table" and response.Success == false then
-                            actionSuccess = false
-                        else
-                            actionSuccess = true
-                        end
+                    if isEvent then
+                        ok, response = pcall(function()
+                            remoteObj:FireServer(unpack(realArgs))
+                        end)
+                        if ok then actionSuccess = true end
                     else
-                        actionSuccess = false
+                        ok, response = pcall(function()
+                            return remoteObj:InvokeServer(unpack(realArgs))
+                        end)
+                        if ok then
+                            if response == false or (type(response) == "table" and response.Success == false) then
+                                actionSuccess = false
+                            else
+                                actionSuccess = true
+                            end
+                        else
+                            actionSuccess = false
+                        end
                     end
                 end
 
                 if not actionSuccess then
                     retryAttempts = retryAttempts + 1
-                    log("PLAY", string.format("⚠️ Aksi [%d/%d] '%s' belum berhasil (Vote/Cooldown/Uang). Mencoba ulang #%d...", 
+                    log("PLAY", string.format("⚠️ Aksi [%d/%d] '%s' belum berhasil (Mencoba ulang #%d)...", 
                         i, #recordedActions, act.remoteName, retryAttempts))
-                    task.wait(0.4 / (currentGameSpeed * playbackSpeed))
+                    task.wait(0.5 / (currentGameSpeed * playbackSpeed))
                 end
             until actionSuccess or not playing
 
@@ -327,7 +352,6 @@ local function createUI()
     title.Parent = main
     Instance.new("UICorner", title).CornerRadius = UDim.new(0, 8)
 
-    -- Tombol Minimize
     local minBtn = Instance.new("TextButton")
     minBtn.Size = UDim2.new(0, 24, 0, 24)
     minBtn.Position = UDim2.new(1, -28, 0, 4)
@@ -362,7 +386,6 @@ local function createUI()
     status.Text = "Status: Ready | Actions: 0"
     status.Parent = main
 
-    -- Input Nama Makro
     local nameInput = Instance.new("TextBox")
     nameInput.Size = UDim2.new(1, -20, 0, 26)
     nameInput.Position = UDim2.new(0, 10, 0, 56)
@@ -380,7 +403,6 @@ local function createUI()
         SaveConfig()
     end)
 
-    -- Tombol Record & Play
     local recBtn = Instance.new("TextButton")
     recBtn.Size = UDim2.new(0.5, -15, 0, 36)
     recBtn.Position = UDim2.new(0, 10, 0, 88)
@@ -401,7 +423,6 @@ local function createUI()
     playBtn.Parent = main
     Instance.new("UICorner", playBtn).CornerRadius = UDim.new(0, 6)
 
-    -- Tombol Save & Load
     local saveBtn = Instance.new("TextButton")
     saveBtn.Size = UDim2.new(0.5, -15, 0, 30)
     saveBtn.Position = UDim2.new(0, 10, 0, 130)
@@ -424,7 +445,6 @@ local function createUI()
     loadBtn.Parent = main
     Instance.new("UICorner", loadBtn).CornerRadius = UDim.new(0, 5)
 
-    -- Tombol Auto Play Toggle
     local autoPlayBtn = Instance.new("TextButton")
     autoPlayBtn.Size = UDim2.new(1, -20, 0, 32)
     autoPlayBtn.Position = UDim2.new(0, 10, 0, 166)
@@ -446,7 +466,6 @@ local function createUI()
     end
     refreshAutoPlayUI()
 
-    -- Speed Controls
     local speedBtn = Instance.new("TextButton")
     speedBtn.Size = UDim2.new(0.5, -15, 0, 26)
     speedBtn.Position = UDim2.new(0, 10, 0, 204)
@@ -469,7 +488,6 @@ local function createUI()
     gameSpeedBtn.Parent = main
     Instance.new("UICorner", gameSpeedBtn).CornerRadius = UDim.new(0, 5)
 
-    -- Tombol Clear
     local clearBtn = Instance.new("TextButton")
     clearBtn.Size = UDim2.new(1, -20, 0, 22)
     clearBtn.Position = UDim2.new(0, 10, 0, 236)
@@ -594,7 +612,7 @@ end
 
 createUI()
 
---//========== HOOK INTERCEPTOR AUTOMATIS (DENGAN VALIDASI SUCCESS) ==========
+--//========== HOOK INTERCEPTOR AUTOMATIS (FIRE & INVOKE SUPPORT) ==========
 task.spawn(function()
     local oldNamecall
     oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
@@ -608,19 +626,16 @@ task.spawn(function()
             end
         end
 
-        if recording and typeof(self) == "Instance" and (method == "InvokeServer" or method == "invokeServer") then
-            if TARGET_REMOTES[self.Name] then
-                -- Jalankan remote terlebih dahulu di server untuk mengetahui hasilnya
+        if recording and typeof(self) == "Instance" and TARGET_REMOTES[self.Name] then
+            if method == "InvokeServer" or method == "invokeServer" or method == "FireServer" or method == "fireServer" then
                 local results = { oldNamecall(self, ...) }
                 local res = results[1]
 
-                -- Evaluasi keberhasilan respon
                 local isSuccess = true
                 if res == false or (type(res) == "table" and res.Success == false) then
                     isSuccess = false
                 end
 
-                -- Hanya rekam jika server mengonfirmasi aksi berhasil
                 if isSuccess then
                     local now = tick()
                     local dt = now - lastRecordTick
@@ -633,17 +648,18 @@ task.spawn(function()
                         pcall(function()
                             local sArgs = SerializeArgs(args)
                             table.insert(recordedActions, {
-                                remote     = self,
-                                remoteName = self.Name,
-                                args       = sArgs,
-                                gameTime   = currentT
+                                remote      = self,
+                                remoteName  = self.Name,
+                                remoteClass = self.ClassName,
+                                args        = sArgs,
+                                gameTime    = currentT
                             })
-                            log("RECORD", string.format("#%d Terekam: '%s' | T_game=%.2fs", 
-                                #recordedActions, self.Name, currentT))
+                            log("RECORD", string.format("#%d Terekam: '%s' (%s) | T_game=%.2fs", 
+                                #recordedActions, self.Name, self.ClassName, currentT))
                         end)
                     end)
                 else
-                    log("RECORD", string.format("⚠️ Aksi '%s' diabaikan karena gagal di server (Mencoba ulang saat merekam?).", self.Name))
+                    log("RECORD", string.format("⚠️ Aksi '%s' diabaikan karena gagal di server.", self.Name))
                 end
 
                 return unpack(results)
@@ -663,7 +679,7 @@ task.spawn(function()
         
         if autoPlayEnabled then
             log("AUTOPLAY", "🤖 Auto Play ON. Menunggu 8 detik (fase Vote Difficulty)...")
-            task.wait(8) -- Penundaan tambahan agar voting difficulty selesai terlebih dahulu
+            task.wait(8)
             StartPlayback()
         end
     else
