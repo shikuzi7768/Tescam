@@ -1,6 +1,6 @@
 --//============================================================
 --// ROBLOX MACRO - Fixed Vector3/CFrame Serialization & Remote Support
---// Fitur: Complete Roblox Data Serialization, Auto Rejoin, Multi-Remote & Auto 2x Speed
+--// Fitur: Complete Roblox Data Serialization, Auto Rejoin, Multi-Remote, Auto 2x & 3x Speed
 --//============================================================
 
 local Players           = game:GetService("Players")
@@ -20,6 +20,7 @@ local recording          = false
 local playing            = false
 local autoPlayEnabled    = false
 local auto2xSpeedEnabled = false
+local auto3xSpeedEnabled = false
 local recordedActions    = {}
 local playbackSpeed      = 1.0
 local currentGameSpeed   = 1.0
@@ -148,6 +149,7 @@ local function SaveConfig()
         local cfg = {
             autoPlay         = autoPlayEnabled,
             auto2xSpeed      = auto2xSpeedEnabled,
+            auto3xSpeed      = auto3xSpeedEnabled,
             lastMacroName    = currentMacroName,
             playbackSpeed    = playbackSpeed,
             currentGameSpeed = currentGameSpeed
@@ -164,6 +166,7 @@ local function LoadConfig()
         if data then
             if data.autoPlay ~= nil then autoPlayEnabled = data.autoPlay end
             if data.auto2xSpeed ~= nil then auto2xSpeedEnabled = data.auto2xSpeed end
+            if data.auto3xSpeed ~= nil then auto3xSpeedEnabled = data.auto3xSpeed end
             if data.lastMacroName then currentMacroName = data.lastMacroName end
             if data.playbackSpeed then playbackSpeed = data.playbackSpeed end
             if data.currentGameSpeed then currentGameSpeed = data.currentGameSpeed end
@@ -241,7 +244,9 @@ local function StartPlayback()
     if recording or #recordedActions == 0 or playing then return end
     playing = true
 
-    if auto2xSpeedEnabled then
+    if auto3xSpeedEnabled then
+        SetGameSpeed(3.0)
+    elseif auto2xSpeedEnabled then
         SetGameSpeed(2.0)
     end
 
@@ -496,25 +501,46 @@ local function createUI()
     Instance.new("UICorner", gameSpeedBtn).CornerRadius = UDim.new(0, 5)
 
     local auto2xBtn = Instance.new("TextButton")
-    auto2xBtn.Size = UDim2.new(1, -20, 0, 26)
+    auto2xBtn.Size = UDim2.new(0.5, -15, 0, 26)
     auto2xBtn.Position = UDim2.new(0, 10, 0, 236)
     auto2xBtn.Font = Enum.Font.GothamBold
     auto2xBtn.TextSize = 10
     auto2xBtn.Parent = main
     Instance.new("UICorner", auto2xBtn).CornerRadius = UDim.new(0, 5)
 
+    local auto3xBtn = Instance.new("TextButton")
+    auto3xBtn.Size = UDim2.new(0.5, -15, 0, 26)
+    auto3xBtn.Position = UDim2.new(0.5, 5, 0, 236)
+    auto3xBtn.Font = Enum.Font.GothamBold
+    auto3xBtn.TextSize = 10
+    auto3xBtn.Parent = main
+    Instance.new("UICorner", auto3xBtn).CornerRadius = UDim.new(0, 5)
+
     local function refreshAuto2xUI()
         if auto2xSpeedEnabled then
-            auto2xBtn.Text = "⚡ AUTO 2x GAME SPEED: ON"
+            auto2xBtn.Text = "⚡ AUTO 2x: ON"
             auto2xBtn.BackgroundColor3 = Color3.fromRGB(40, 140, 70)
             auto2xBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
         else
-            auto2xBtn.Text = "⚡ AUTO 2x GAME SPEED: OFF"
+            auto2xBtn.Text = "⚡ AUTO 2x: OFF"
             auto2xBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 75)
             auto2xBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
         end
     end
+
+    local function refreshAuto3xUI()
+        if auto3xSpeedEnabled then
+            auto3xBtn.Text = "🔥 AUTO 3x: ON"
+            auto3xBtn.BackgroundColor3 = Color3.fromRGB(40, 140, 70)
+            auto3xBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        else
+            auto3xBtn.Text = "🔥 AUTO 3x: OFF"
+            auto3xBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 75)
+            auto3xBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+        end
+    end
     refreshAuto2xUI()
+    refreshAuto3xUI()
 
     local clearBtn = Instance.new("TextButton")
     clearBtn.Size = UDim2.new(1, -20, 0, 22)
@@ -593,15 +619,30 @@ local function createUI()
 
     auto2xBtn.MouseButton1Click:Connect(function()
         auto2xSpeedEnabled = not auto2xSpeedEnabled
-        refreshAuto2xUI()
-        SaveConfig()
-
         if auto2xSpeedEnabled then
+            auto3xSpeedEnabled = false
             SetGameSpeed(2.0)
             log("SPEED", "⚡ Auto 2x Game Speed diaktifkan.")
         else
             log("SPEED", "⏹ Auto 2x Game Speed dimatikan.")
         end
+        refreshAuto2xUI()
+        refreshAuto3xUI()
+        SaveConfig()
+    end)
+
+    auto3xBtn.MouseButton1Click:Connect(function()
+        auto3xSpeedEnabled = not auto3xSpeedEnabled
+        if auto3xSpeedEnabled then
+            auto2xSpeedEnabled = false
+            SetGameSpeed(3.0)
+            log("SPEED", "🔥 Auto 3x Game Speed diaktifkan.")
+        else
+            log("SPEED", "⏹ Auto 3x Game Speed dimatikan.")
+        end
+        refreshAuto2xUI()
+        refreshAuto3xUI()
+        SaveConfig()
     end)
 
     saveBtn.MouseButton1Click:Connect(function()
@@ -626,7 +667,7 @@ local function createUI()
         SaveConfig()
     end)
 
-    local gameSpeeds = {1.0, 1.5, 2.0}
+    local gameSpeeds = {1.0, 1.5, 2.0, 3.0}
     local gameSpeedIdx = 1
     gameSpeedBtn.MouseButton1Click:Connect(function()
         gameSpeedIdx = (gameSpeedIdx % #gameSpeeds) + 1
@@ -715,7 +756,9 @@ end)
 task.spawn(function()
     task.wait(3)
     
-    if auto2xSpeedEnabled then
+    if auto3xSpeedEnabled then
+        SetGameSpeed(3.0)
+    elseif auto2xSpeedEnabled then
         SetGameSpeed(2.0)
     end
 
@@ -725,7 +768,9 @@ task.spawn(function()
         if autoPlayEnabled then
             log("AUTOPLAY", "🤖 Auto Play ON. Menunggu 8 detik (fase Vote Difficulty)...")
             task.wait(8)
-            if auto2xSpeedEnabled then
+            if auto3xSpeedEnabled then
+                SetGameSpeed(3.0)
+            elseif auto2xSpeedEnabled then
                 SetGameSpeed(2.0)
             end
             StartPlayback()
