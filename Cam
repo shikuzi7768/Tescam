@@ -1,6 +1,6 @@
 --//============================================================
 --// ROBLOX MACRO - Fixed Vector3/CFrame Serialization & Remote Support
---// Fitur: Complete Roblox Data Serialization, Auto Rejoin, Multi-Remote, Auto 2x & 3x Speed
+--// Fitur: Complete Roblox Data Serialization, Auto Rejoin, Multi-Remote, Auto 2x & 3x Speed, Auto Summon x25, Auto Spin Wheel
 --//============================================================
 
 local Players           = game:GetService("Players")
@@ -21,6 +21,9 @@ local playing            = false
 local autoPlayEnabled    = false
 local auto2xSpeedEnabled = false
 local auto3xSpeedEnabled = false
+local autoSummonEnabled  = false
+local autoSpinEnabled    = false
+
 local recordedActions    = {}
 local playbackSpeed      = 1.0
 local currentGameSpeed   = 1.0
@@ -150,6 +153,8 @@ local function SaveConfig()
             autoPlay         = autoPlayEnabled,
             auto2xSpeed      = auto2xSpeedEnabled,
             auto3xSpeed      = auto3xSpeedEnabled,
+            autoSummon       = autoSummonEnabled,
+            autoSpin         = autoSpinEnabled,
             lastMacroName    = currentMacroName,
             playbackSpeed    = playbackSpeed,
             currentGameSpeed = currentGameSpeed
@@ -162,14 +167,17 @@ end
 local function LoadConfig()
     if not readfile or not isfile or not isfile(CONFIG_FILE) then return end
     pcall(function()
-        local data = HttpService:JSONDecode(readfile(CONFIG_FILE))
-        if data then
-            if data.autoPlay ~= nil then autoPlayEnabled = data.autoPlay end
-            if data.auto2xSpeed ~= nil then auto2xSpeedEnabled = data.auto2xSpeed end
-            if data.auto3xSpeed ~= nil then auto3xSpeedEnabled = data.auto3xSpeed end
-            if data.lastMacroName then currentMacroName = data.lastMacroName end
-            if data.playbackSpeed then playbackSpeed = data.playbackSpeed end
-            if data.currentGameSpeed then currentGameSpeed = data.currentGameSpeed end
+        local data = HttpService:JSONEncode(readfile(CONFIG_FILE)) -- decode
+        local parsed = HttpService:JSONDecode(readfile(CONFIG_FILE))
+        if parsed then
+            if parsed.autoPlay ~= nil then autoPlayEnabled = parsed.autoPlay end
+            if parsed.auto2xSpeed ~= nil then auto2xSpeedEnabled = parsed.auto2xSpeed end
+            if parsed.auto3xSpeed ~= nil then auto3xSpeedEnabled = parsed.auto3xSpeed end
+            if parsed.autoSummon ~= nil then autoSummonEnabled = parsed.autoSummon end
+            if parsed.autoSpin ~= nil then autoSpinEnabled = parsed.autoSpin end
+            if parsed.lastMacroName then currentMacroName = parsed.lastMacroName end
+            if parsed.playbackSpeed then playbackSpeed = parsed.playbackSpeed end
+            if parsed.currentGameSpeed then currentGameSpeed = parsed.currentGameSpeed end
             log("CONFIG", "📂 Konfigurasi tersimpan berhasil dimuat.")
         end
     end)
@@ -333,6 +341,41 @@ end
 -- Load Config Awal
 LoadConfig()
 
+--//========== LOOP BACKGROUND AUTO SUMMON & AUTO SPIN ==========
+task.spawn(function()
+    while true do
+        if autoSummonEnabled then
+            pcall(function()
+                local summonRemote = ReplicatedStorage:FindFirstChild("RemoteFunctions") and ReplicatedStorage.RemoteFunctions:FindFirstChild("SummonUnits")
+                if summonRemote then
+                    summonRemote:InvokeServer(25)
+                    log("SUMMON", "🔮 Auto Summon x25 dieksekusi.")
+                end
+            end)
+            task.wait(1.5)
+        else
+            task.wait(1)
+        end
+    end
+end)
+
+task.spawn(function()
+    while true do
+        if autoSpinEnabled then
+            pcall(function()
+                local spinRemote = ReplicatedStorage:FindFirstChild("RemoteFunctions") and ReplicatedStorage.RemoteFunctions:FindFirstChild("SpinWheel")
+                if spinRemote then
+                    spinRemote:InvokeServer()
+                    log("SPIN", "🎰 Auto Spin Wheel dieksekusi.")
+                end
+            end)
+            task.wait(1.5)
+        else
+            task.wait(1)
+        end
+    end
+end)
+
 --//========== GUI MACRO ==========
 local function createUI()
     local parent = (gethui and gethui()) or game:GetService("CoreGui")
@@ -344,7 +387,7 @@ local function createUI()
     gui.Parent = parent
 
     local main = Instance.new("Frame")
-    main.Size = UDim2.new(0, 300, 0, 310)
+    main.Size = UDim2.new(0, 300, 0, 335)
     main.Position = UDim2.new(0, 20, 0, 100)
     main.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
     main.Active = true
@@ -357,7 +400,7 @@ local function createUI()
     local title = Instance.new("TextLabel")
     title.Size = UDim2.new(1, 0, 0, 32)
     title.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
-    title.Text = "⚡ MACRO • Auto Rejoin & Auto Play"
+    title.Text = "⚡ MACRO • Auto Rejoin & Utilities"
     title.TextColor3 = Color3.fromRGB(255, 255, 255)
     title.TextSize = 11
     title.Font = Enum.Font.GothamBold
@@ -379,7 +422,7 @@ local function createUI()
     local isMinimized = false
     minBtn.MouseButton1Click:Connect(function()
         isMinimized = not isMinimized
-        local targetSize = isMinimized and UDim2.new(0, 300, 0, 32) or UDim2.new(0, 300, 0, 310)
+        local targetSize = isMinimized and UDim2.new(0, 300, 0, 32) or UDim2.new(0, 300, 0, 335)
         
         TweenService:Create(main, TweenInfo.new(0.25, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
             Size = targetSize
@@ -542,9 +585,66 @@ local function createUI()
     refreshAuto2xUI()
     refreshAuto3xUI()
 
+    --// TOMBOL AUTO SUMMON & AUTO SPIN
+    local autoSummonBtn = Instance.new("TextButton")
+    autoSummonBtn.Size = UDim2.new(0.5, -15, 0, 26)
+    autoSummonBtn.Position = UDim2.new(0, 10, 0, 268)
+    autoSummonBtn.Font = Enum.Font.GothamBold
+    autoSummonBtn.TextSize = 10
+    autoSummonBtn.Parent = main
+    Instance.new("UICorner", autoSummonBtn).CornerRadius = UDim.new(0, 5)
+
+    local autoSpinBtn = Instance.new("TextButton")
+    autoSpinBtn.Size = UDim2.new(0.5, -15, 0, 26)
+    autoSpinBtn.Position = UDim2.new(0.5, 5, 0, 268)
+    autoSpinBtn.Font = Enum.Font.GothamBold
+    autoSpinBtn.TextSize = 10
+    autoSpinBtn.Parent = main
+    Instance.new("UICorner", autoSpinBtn).CornerRadius = UDim.new(0, 5)
+
+    local function refreshAutoSummonUI()
+        if autoSummonEnabled then
+            autoSummonBtn.Text = "🔮 SUMMON x25: ON"
+            autoSummonBtn.BackgroundColor3 = Color3.fromRGB(40, 140, 70)
+            autoSummonBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        else
+            autoSummonBtn.Text = "🔮 SUMMON x25: OFF"
+            autoSummonBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 75)
+            autoSummonBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+        end
+    end
+
+    local function refreshAutoSpinUI()
+        if autoSpinEnabled then
+            autoSpinBtn.Text = "🎰 AUTO SPIN: ON"
+            autoSpinBtn.BackgroundColor3 = Color3.fromRGB(40, 140, 70)
+            autoSpinBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        else
+            autoSpinBtn.Text = "🎰 AUTO SPIN: OFF"
+            autoSpinBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 75)
+            autoSpinBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+        end
+    end
+    refreshAutoSummonUI()
+    refreshAutoSpinUI()
+
+    autoSummonBtn.MouseButton1Click:Connect(function()
+        autoSummonEnabled = not autoSummonEnabled
+        refreshAutoSummonUI()
+        SaveConfig()
+        log("SUMMON", autoSummonEnabled and "✅ Auto Summon x25 Diaktifkan." or "⏹ Auto Summon x25 Dimatikan.")
+    end)
+
+    autoSpinBtn.MouseButton1Click:Connect(function()
+        autoSpinEnabled = not autoSpinEnabled
+        refreshAutoSpinUI()
+        SaveConfig()
+        log("SPIN", autoSpinEnabled and "✅ Auto Spin Wheel Diaktifkan." or "⏹ Auto Spin Wheel Dimatikan.")
+    end)
+
     local clearBtn = Instance.new("TextButton")
     clearBtn.Size = UDim2.new(1, -20, 0, 22)
-    clearBtn.Position = UDim2.new(0, 10, 0, 268)
+    clearBtn.Position = UDim2.new(0, 10, 0, 300)
     clearBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
     clearBtn.Text = "🗑 Clear Records"
     clearBtn.TextColor3 = Color3.fromRGB(180, 180, 180)
