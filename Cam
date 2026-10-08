@@ -1,6 +1,6 @@
 --//============================================================
---// ROBLOX MACRO - Fixed Vector3/CFrame Serialization & Remote Support
---// Fitur: Data Serialization, Auto Rejoin, Multi-Remote, Auto 2x/3x Speed, Auto Summon x25, Auto Spin Wheel, Auto Open Crate x6
+--// ROBLOX MACRO - Custom Crate Name & Dynamic Auto Open Support
+--// Fitur: Dynamic Crate Target, Data Serialization, Auto Rejoin, Multi-Remote, Auto 2x/3x Speed, Auto Summon x25, Auto Spin Wheel, Auto Open Crate x6
 --//============================================================
 
 local Players           = game:GetService("Players")
@@ -24,6 +24,8 @@ local auto3xSpeedEnabled   = false
 local autoSummonEnabled    = false
 local autoSpinEnabled      = false
 local autoOpenCrateEnabled = false
+
+local selectedCrateName    = "10MCrate"
 
 local recordedActions      = {}
 local playbackSpeed        = 1.0
@@ -157,6 +159,7 @@ local function SaveConfig()
             autoSummon       = autoSummonEnabled,
             autoSpin         = autoSpinEnabled,
             autoOpenCrate    = autoOpenCrateEnabled,
+            selectedCrate    = selectedCrateName,
             lastMacroName    = currentMacroName,
             playbackSpeed    = playbackSpeed,
             currentGameSpeed = currentGameSpeed
@@ -177,6 +180,7 @@ local function LoadConfig()
             if parsed.autoSummon ~= nil then autoSummonEnabled = parsed.autoSummon end
             if parsed.autoSpin ~= nil then autoSpinEnabled = parsed.autoSpin end
             if parsed.autoOpenCrate ~= nil then autoOpenCrateEnabled = parsed.autoOpenCrate end
+            if parsed.selectedCrate then selectedCrateName = parsed.selectedCrate end
             if parsed.lastMacroName then currentMacroName = parsed.lastMacroName end
             if parsed.playbackSpeed then playbackSpeed = parsed.playbackSpeed end
             if parsed.currentGameSpeed then currentGameSpeed = parsed.currentGameSpeed end
@@ -343,7 +347,7 @@ end
 -- Load Config Awal
 LoadConfig()
 
---//========== LOOP BACKGROUND AUTO SUMMON, AUTO SPIN & AUTO OPEN CRATE ==========
+--//========== LOOP BACKGROUND AUTO SUMMON, AUTO SPIN & DYNAMIC AUTO OPEN CRATE ==========
 task.spawn(function()
     while true do
         if autoSummonEnabled then
@@ -383,9 +387,9 @@ task.spawn(function()
         if autoOpenCrateEnabled then
             pcall(function()
                 local crateRemote = ReplicatedStorage:FindFirstChild("RemoteFunctions") and ReplicatedStorage.RemoteFunctions:FindFirstChild("OpenCrate")
-                if crateRemote then
-                    crateRemote:InvokeServer("10MCrate", 6)
-                    log("CRATE", "📦 Auto Open Crate x6 dieksekusi.")
+                if crateRemote and selectedCrateName ~= "" then
+                    crateRemote:InvokeServer(selectedCrateName, 6)
+                    log("CRATE", string.format("📦 Auto Open Crate '%s' x6 dieksekusi.", selectedCrateName))
                 end
             end)
             task.wait(1.5)
@@ -406,7 +410,7 @@ local function createUI()
     gui.Parent = parent
 
     local main = Instance.new("Frame")
-    main.Size = UDim2.new(0, 300, 0, 365)
+    main.Size = UDim2.new(0, 300, 0, 395)
     main.Position = UDim2.new(0, 20, 0, 100)
     main.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
     main.Active = true
@@ -441,7 +445,7 @@ local function createUI()
     local isMinimized = false
     minBtn.MouseButton1Click:Connect(function()
         isMinimized = not isMinimized
-        local targetSize = isMinimized and UDim2.new(0, 300, 0, 32) or UDim2.new(0, 300, 0, 365)
+        local targetSize = isMinimized and UDim2.new(0, 300, 0, 32) or UDim2.new(0, 300, 0, 395)
         
         TweenService:Create(main, TweenInfo.new(0.25, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
             Size = targetSize
@@ -646,10 +650,27 @@ local function createUI()
     refreshAutoSummonUI()
     refreshAutoSpinUI()
 
-    --// TOMBOL AUTO OPEN CRATE x6
+    --// INPUT NAMA CRATE & TOMBOL AUTO OPEN CRATE x6
+    local crateInput = Instance.new("TextBox")
+    crateInput.Size = UDim2.new(1, -20, 0, 24)
+    crateInput.Position = UDim2.new(0, 10, 0, 300)
+    crateInput.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+    crateInput.Text = selectedCrateName
+    crateInput.PlaceholderText = "Nama Crate (contoh: 10MCrate)..."
+    crateInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+    crateInput.Font = Enum.Font.GothamBold
+    crateInput.TextSize = 10
+    crateInput.Parent = main
+    Instance.new("UICorner", crateInput).CornerRadius = UDim.new(0, 5)
+
+    crateInput:GetPropertyChangedSignal("Text"):Connect(function()
+        selectedCrateName = crateInput.Text
+        SaveConfig()
+    end)
+
     local autoCrateBtn = Instance.new("TextButton")
     autoCrateBtn.Size = UDim2.new(1, -20, 0, 26)
-    autoCrateBtn.Position = UDim2.new(0, 10, 0, 300)
+    autoCrateBtn.Position = UDim2.new(0, 10, 0, 328)
     autoCrateBtn.Font = Enum.Font.GothamBold
     autoCrateBtn.TextSize = 10
     autoCrateBtn.Parent = main
@@ -686,12 +707,12 @@ local function createUI()
         autoOpenCrateEnabled = not autoOpenCrateEnabled
         refreshAutoCrateUI()
         SaveConfig()
-        log("CRATE", autoOpenCrateEnabled and "✅ Auto Open Crate x6 Diaktifkan." or "⏹ Auto Open Crate x6 Dimatikan.")
+        log("CRATE", autoOpenCrateEnabled and ("✅ Auto Open Crate (" .. selectedCrateName .. ") Diaktifkan.") or "⏹ Auto Open Crate Dimatikan.")
     end)
 
     local clearBtn = Instance.new("TextButton")
     clearBtn.Size = UDim2.new(1, -20, 0, 22)
-    clearBtn.Position = UDim2.new(0, 10, 0, 332)
+    clearBtn.Position = UDim2.new(0, 10, 0, 360)
     clearBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
     clearBtn.Text = "🗑 Clear Records"
     clearBtn.TextColor3 = Color3.fromRGB(180, 180, 180)
