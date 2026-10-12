@@ -1,6 +1,6 @@
 --//============================================================
---// ROBLOX MACRO v1.0 - Cash-Based Sequential & Strict Filtering
---// Fitur: Cash-Based Execution, Strict Success Blocking, Auto Rejoin, Multi-Remote, Auto 2x/3x Speed, Auto Summon x25, Auto Spin Wheel, Auto Open Crate x6, Spatial Position Resolution (Anti-Adjacent Mixup)
+--// ROBLOX MACRO v1.2 - Cash-Based Sequential & Strict Filtering
+--// Fitur: Place, Upgrade, Sell, CinemaRelocate, Cash-Based Execution, Strict Success Blocking, Auto Rejoin, Multi-Remote, Auto 2x/3x Speed, Auto Summon x25, Auto Spin Wheel, Auto Open Crate x6, Spatial Position Resolution
 --//============================================================
 
 local Players           = game:GetService("Players")
@@ -11,9 +11,14 @@ local TweenService      = game:GetService("TweenService")
 local LocalPlayer = Players.LocalPlayer
 
 local TARGET_REMOTES = {
-    ["PlaceTower"]   = true,
-    ["UpgradeTower"] = true,
-    ["SellTower"]    = true
+    ["PlaceTower"]      = true,
+    ["UpgradeTower"]    = true,
+    ["SellTower"]       = true,
+    ["CinemaRelocate"]  = true,
+    ["ActivateAbility"] = true,
+    ["UseAbility"]      = true,
+    ["TowerAbility"]    = true,
+    ["Ability"]         = true
 }
 
 local recording            = false
@@ -34,7 +39,7 @@ local currentMacroName     = "Makro 1"
 local CONFIG_FILE = "TD_Macro_Config.json"
 
 local function log(tag, msg)
-    print(string.format("[%s][MACRO v1.0][%s] %s", os.date("%H:%M:%S"), tag, msg))
+    print(string.format("[%s][MACRO v1.2][%s] %s", os.date("%H:%M:%S"), tag, msg))
 end
 
 local function GetFileName(profileName)
@@ -62,7 +67,7 @@ local function SetGameSpeed(speed)
     end)
 end
 
---//========== AMBIL POSISI INSTANCE (UNTUK MENCEGAH TOWER BERDEKATAN TERTUKAR) ==========
+--//========== AMBIL POSISI INSTANCE (MENCEGAH TOWER/ABILITY TERTUKAR) ==========
 local function GetInstancePosition(inst)
     local pos = nil
     pcall(function()
@@ -308,7 +313,7 @@ local function StartPlayback()
     end
 
     task.spawn(function()
-        log("PLAY", string.format("▶ Memulai '%s' v1.0 [Cash-Based & Strict Sequential]...", currentMacroName))
+        log("PLAY", string.format("▶ Memulai '%s' v1.2 [Cash-Based & Strict Sequential]...", currentMacroName))
 
         for i, act in ipairs(recordedActions) do
             if not playing then break end
@@ -362,7 +367,7 @@ local function StartPlayback()
         end
 
         playing = false
-        log("PLAY", "✅ Playback Makro v1.0 Selesai.")
+        log("PLAY", "✅ Playback Makro v1.2 Selesai.")
     end)
 end
 
@@ -438,7 +443,7 @@ local function createUI()
     local title = Instance.new("TextLabel")
     title.Size = UDim2.new(1, 0, 0, 32)
     title.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
-    title.Text = "⚡ MACRO v1.0 • Cash-Based & Utilities"
+    title.Text = "⚡ MACRO v1.2 • Cash-Based & Utilities"
     title.TextColor3 = Color3.fromRGB(255, 255, 255)
     title.TextSize = 11
     title.Font = Enum.Font.GothamBold
@@ -884,7 +889,7 @@ task.spawn(function()
     end
 
     if LoadMacroFromFile(currentMacroName) then
-        log("INIT", string.format("📂 Makro '%s' v1.0 berhasil dimuat dari file tersimpan.", currentMacroName))
+        log("INIT", string.format("📂 Makro '%s' v1.2 berhasil dimuat dari file tersimpan.", currentMacroName))
         
         if autoPlayEnabled then
             log("AUTOPLAY", "🤖 Auto Play ON. Menunggu 8 detik (fase Vote Difficulty)...")
