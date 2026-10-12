@@ -1,6 +1,6 @@
 --//============================================================
 --// ROBLOX MACRO - Cash-Based Sequential & Strict Filtering
---// Fitur: Cash-Based Execution, Strict Success Blocking, Auto Rejoin, Multi-Remote, Auto 2x/3x Speed, Auto Summon x25, Auto Spin Wheel, Auto Open Crate x6, Detailed Action Indexing (#1, #2, dst)
+--// Fitur: Cash-Based Execution, Strict Success Blocking, Auto Rejoin, Multi-Remote, Auto 2x/3x Speed, Auto Summon x25, Auto Spin Wheel, Auto Open Crate x6, Spatial Position Resolution (Anti-Adjacent Mixup)
 --//============================================================
 
 local Players           = game:GetService("Players")
@@ -62,11 +62,29 @@ local function SetGameSpeed(speed)
     end)
 end
 
---//========== SERIALISASI TIPE DATA ROBLOX (VECTOR3, CFRAME, INSTANCE, ENUM) ==========
+--//========== AMBIL POSISI INSTANCE (UNTUK MENCEGAH TOWER BERDEKATAN TERTUKAR) ==========
+local function GetInstancePosition(inst)
+    local pos = nil
+    pcall(function()
+        if typeof(inst) == "Instance" then
+            if inst:IsA("Model") then
+                local p = inst:GetPivot().Position
+                pos = { x = p.X, y = p.Y, z = p.Z }
+            elseif inst:IsA("BasePart") then
+                local p = inst.Position
+                pos = { x = p.X, y = p.Y, z = p.Z }
+            end
+        end
+    end)
+    return pos
+end
+
+--//========== SERIALISASI TIPE DATA ROBLOX ==========
 local function SerializeVal(v)
     local t = typeof(v)
     if t == "Instance" then
-        return { __type = "Instance", path = v:GetFullName(), name = v.Name }
+        local pos = GetInstancePosition(v)
+        return { __type = "Instance", path = v:GetFullName(), name = v.Name, pos = pos }
     elseif t == "Vector3" then
         return { __type = "Vector3", x = v.X, y = v.Y, z = v.Z }
     elseif t == "CFrame" then
@@ -96,7 +114,41 @@ local function SerializeArgs(args)
     return serialized
 end
 
-local function ResolveInstance(path, name)
+--//========== RESOLVE INSTANCE BERBASIS SPATIAL (NEAREST POSITION) ==========
+local function ResolveInstance(path, name, posData)
+    -- Jika posisi terekam, cari objek di workspace yang paling dekat dengan koordinat tersebut
+    if posData and type(posData) == "table" then
+        local targetPos = Vector3.new(posData.x or 0, posData.y or 0, posData.z or 0)
+        local closestObj = nil
+        local shortestDist = math.huge
+
+        for _, desc in ipairs(workspace:GetDescendants()) do
+            if desc.Name == name then
+                local p = nil
+                pcall(function()
+                    if desc:IsA("Model") then
+                        p = desc:GetPivot().Position
+                    elseif desc:IsA("BasePart") then
+                        p = desc.Position
+                    end
+                end)
+                if p then
+                    local dist = (p - targetPos).Magnitude
+                    if dist < shortestDist then
+                        shortestDist = dist
+                        closestObj = desc
+                    end
+                end
+            end
+        end
+
+        -- Jika ditemukan dalam radius 10 stud, gunakan objek tersebut (menghindari tertukar dengan tower lain)
+        if closestObj and shortestDist < 10.0 then
+            return closestObj
+        end
+    end
+
+    -- Fallback ke pencarian path standar jika posisi tidak valid
     local obj = workspace
     for segment in string.gmatch(path or "", "[^.]+") do
         if segment ~= "Workspace" and segment ~= "game" then
@@ -110,7 +162,7 @@ end
 local function DeserializeVal(v)
     if type(v) == "table" then
         if v.__type == "Instance" then
-            return ResolveInstance(v.path, v.name)
+            return ResolveInstance(v.path, v.name, v.pos)
         elseif v.__type == "Vector3" then
             return Vector3.new(v.x or 0, v.y or 0, v.z or 0)
         elseif v.__type == "CFrame" and v.components then
@@ -268,7 +320,6 @@ local function StartPlayback()
             local retryAttempts = 0
             local idxStr = act.actionIndex and (" #" .. act.actionIndex) or ""
 
-            -- Loop ketat: Terus mencoba aksi sampai berhasil (menunggu cash cukup)
             repeat
                 if not playing then break end
 
@@ -321,16 +372,13 @@ end
 -- Load Config Awal
 LoadConfig()
 
---//========== LOOP BACKGROUND AUTO SUMMON, AUTO SPIN & DYNAMIC AUTO OPEN CRATE ==========
+--//========== LOOP BACKGROUND UTILITIES ==========
 task.spawn(function()
     while true do
         if autoSummonEnabled then
             pcall(function()
                 local summonRemote = ReplicatedStorage:FindFirstChild("RemoteFunctions") and ReplicatedStorage.RemoteFunctions:FindFirstChild("SummonUnits")
-                if summonRemote then
-                    summonRemote:InvokeServer(25)
-                    log("SUMMON", "🔮 Auto Summon x25 dieksekusi.")
-                end
+                if summonRemote then summonRemote:InvokeServer(25) end
             end)
             task.wait(1.5)
         else
@@ -344,10 +392,7 @@ task.spawn(function()
         if autoSpinEnabled then
             pcall(function()
                 local spinRemote = ReplicatedStorage:FindFirstChild("RemoteFunctions") and ReplicatedStorage.RemoteFunctions:FindFirstChild("SpinWheel")
-                if spinRemote then
-                    spinRemote:InvokeServer()
-                    log("SPIN", "🎰 Auto Spin Wheel dieksekusi.")
-                end
+                if spinRemote then spinRemote:InvokeServer() end
             end)
             task.wait(1.5)
         else
@@ -363,7 +408,6 @@ task.spawn(function()
                 local crateRemote = ReplicatedStorage:FindFirstChild("RemoteFunctions") and ReplicatedStorage.RemoteFunctions:FindFirstChild("OpenCrate")
                 if crateRemote and selectedCrateName ~= "" then
                     crateRemote:InvokeServer(selectedCrateName, 6)
-                    log("CRATE", string.format("📦 Auto Open Crate '%s' x6 dieksekusi.", selectedCrateName))
                 end
             end)
             task.wait(1.5)
@@ -420,11 +464,7 @@ local function createUI()
     minBtn.MouseButton1Click:Connect(function()
         isMinimized = not isMinimized
         local targetSize = isMinimized and UDim2.new(0, 300, 0, 32) or UDim2.new(0, 300, 0, 370)
-        
-        TweenService:Create(main, TweenInfo.new(0.25, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
-            Size = targetSize
-        }):Play()
-
+        TweenService:Create(main, TweenInfo.new(0.25, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), { Size = targetSize }):Play()
         minBtn.Text = isMinimized and "+" or "-"
     end)
 
@@ -618,7 +658,7 @@ local function createUI()
     crateInput.Position = UDim2.new(0, 10, 0, 300)
     crateInput.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
     crateInput.Text = selectedCrateName
-    crateInput.PlaceholderText = "Nama Crate (contoh: 10MCrate)..."
+    crateInput.PlaceholderText = "Nama Crate..."
     crateInput.TextColor3 = Color3.fromRGB(255, 255, 255)
     crateInput.Font = Enum.Font.GothamBold
     crateInput.TextSize = 10
@@ -655,21 +695,18 @@ local function createUI()
         autoSummonEnabled = not autoSummonEnabled
         refreshAutoSummonUI()
         SaveConfig()
-        log("SUMMON", autoSummonEnabled and "✅ Auto Summon x25 Diaktifkan." or "⏹ Auto Summon x25 Dimatikan.")
     end)
 
     autoSpinBtn.MouseButton1Click:Connect(function()
         autoSpinEnabled = not autoSpinEnabled
         refreshAutoSpinUI()
         SaveConfig()
-        log("SPIN", autoSpinEnabled and "✅ Auto Spin Wheel Diaktifkan." or "⏹ Auto Spin Wheel Dimatikan.")
     end)
 
     autoCrateBtn.MouseButton1Click:Connect(function()
         autoOpenCrateEnabled = not autoOpenCrateEnabled
         refreshAutoCrateUI()
         SaveConfig()
-        log("CRATE", autoOpenCrateEnabled and ("✅ Auto Open Crate (" .. selectedCrateName .. ") Diaktifkan.") or "⏹ Auto Open Crate Dimatikan.")
     end)
 
     local function updateStatus()
@@ -687,24 +724,23 @@ local function createUI()
         gameSpeedBtn.Text = string.format("🎮 Game Speed: %.1fx", currentGameSpeed)
     end
 
-    local actionCounters = {} -- Menyimpan penghitung per remote name
-
     recBtn.MouseButton1Click:Connect(function()
         if recording then
             recording = false
             recBtn.Text = "⏺ RECORD"
             recBtn.BackgroundColor3 = Color3.fromRGB(190, 50, 50)
             log("RECORD", string.format("⏹ Record selesai. Total %d aksi sukses terekam.", #recordedActions))
-            
             SaveMacroToFile(currentMacroName)
         else
             if playing then return end
             recordedActions = {}
-            actionCounters  = {} -- Reset counter saat mulai rekaman baru
-            recording       = true
-            recBtn.Text     = "⏹ STOP"
+            if _G.MacroActionCounters then
+                table.clear(_G.MacroActionCounters)
+            end
+            recording = true
+            recBtn.Text = "⏹ STOP"
             recBtn.BackgroundColor3 = Color3.fromRGB(110, 30, 30)
-            log("RECORD", "▶ Recording dimulai (Hanya merekam aksi sukses)...")
+            log("RECORD", "▶ Recording dimulai...")
         end
         updateStatus()
     end)
@@ -725,15 +761,12 @@ local function createUI()
         SaveConfig()
 
         if autoPlayEnabled then
-            log("AUTOPLAY", "✅ Auto Play diaktifkan.")
             if #recordedActions == 0 then
                 LoadMacroFromFile(currentMacroName)
             end
             if not playing and #recordedActions > 0 then
                 StartPlayback()
             end
-        else
-            log("AUTOPLAY", "⏹ Auto Play dimatikan.")
         end
     end)
 
@@ -742,9 +775,6 @@ local function createUI()
         if auto2xSpeedEnabled then
             auto3xSpeedEnabled = false
             SetGameSpeed(2.0)
-            log("SPEED", "⚡ Auto 2x Game Speed diaktifkan.")
-        else
-            log("SPEED", "⏹ Auto 2x Game Speed dimatikan.")
         end
         refreshAuto2xUI()
         refreshAuto3xUI()
@@ -756,9 +786,6 @@ local function createUI()
         if auto3xSpeedEnabled then
             auto2xSpeedEnabled = false
             SetGameSpeed(3.0)
-            log("SPEED", "🔥 Auto 3x Game Speed diaktifkan.")
-        else
-            log("SPEED", "⏹ Auto 3x Game Speed dimatikan.")
         end
         refreshAuto2xUI()
         refreshAuto3xUI()
@@ -782,8 +809,7 @@ local function createUI()
     local gameSpeedIdx = 1
     gameSpeedBtn.MouseButton1Click:Connect(function()
         gameSpeedIdx = (gameSpeedIdx % #gameSpeeds) + 1
-        local newSpd = gameSpeeds[gameSpeedIdx]
-        SetGameSpeed(newSpd)
+        SetGameSpeed(gameSpeeds[gameSpeedIdx])
         SaveConfig()
         updateStatus()
     end)
@@ -798,7 +824,7 @@ end
 
 createUI()
 
---//========== HOOK INTERCEPTOR: MEREKAM & MENOMORI AKSI SUKSES ==========
+--//========== HOOK INTERCEPTOR ==========
 task.spawn(function()
     local oldNamecall
     oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
@@ -808,7 +834,6 @@ task.spawn(function()
         if (method == "FireServer" or method == "fireServer") and self.Name == "SetGameSpeed" then
             if type(args[1]) == "number" then
                 currentGameSpeed = args[1]
-                log("GAME", string.format("Terdeteksi perubahan kecepatan game: x%.1f", currentGameSpeed))
             end
         end
 
@@ -825,7 +850,6 @@ task.spawn(function()
                 if isSuccess then
                     task.spawn(function()
                         pcall(function()
-                            -- Inisialisasi atau increment penghitung untuk remote ini
                             if not _G.MacroActionCounters then _G.MacroActionCounters = {} end
                             _G.MacroActionCounters[self.Name] = (_G.MacroActionCounters[self.Name] or 0) + 1
                             local currentActionIdx = _G.MacroActionCounters[self.Name]
@@ -842,8 +866,6 @@ task.spawn(function()
                                 #recordedActions, self.Name, currentActionIdx))
                         end)
                     end)
-                else
-                    log("RECORD", string.format("❌ Diabaikan (Gagal/Ditolak Server): '%s'", self.Name))
                 end
 
                 return unpack(results)
@@ -854,7 +876,7 @@ task.spawn(function()
     end))
 end)
 
---//========== PROSES OTOMATIS SAAT REJOIN / AUTO EXECUTE ==========
+--//========== PROSES OTOMATIS SAAT REJOIN ==========
 task.spawn(function()
     task.wait(3)
     
@@ -878,6 +900,6 @@ task.spawn(function()
             StartPlayback()
         end
     else
-        log("INIT", "ℹ️ Belum ada makro tersimpan yang ditemukan. Silakan rekam makro baru.")
+        log("INIT", "ℹ️ Belum ada makro tersimpan yang ditemukan.")
     end
 end)
