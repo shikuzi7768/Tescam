@@ -1,6 +1,6 @@
 --//============================================================
---// ROBLOX MACRO - Cash-Based + Spatial Proximity Tower Resolution
---// Fitur: Spatial Tower Matching, Cash-Based Execution, Strict Success Blocking, Auto Rejoin, Multi-Remote, Auto 2x/3x Speed, Auto Summon x25, Auto Spin Wheel, Auto Open Crate x6
+--// ROBLOX MACRO - Cash-Based + Spatial Proximity & Replication Fix
+--// Fitur: Replication Stabilization, Spatial Tower Matching, Cash-Based Execution, Strict Success Blocking, Auto Rejoin
 --//============================================================
 
 local Players           = game:GetService("Players")
@@ -62,7 +62,7 @@ local function SetGameSpeed(speed)
     end)
 end
 
---//========== SERIALISASI DENGAN POSISI SPASIAL (MENGATASI TOWER IDENTIK) ==========
+--//========== SERIALISASI DENGAN POSISI SPASIAL ==========
 local function SerializeVal(v)
     local t = typeof(v)
     if t == "Instance" then
@@ -136,13 +136,13 @@ local function ResolveInstance(path, name, recordedPos)
             end
         end
 
-        -- Jika ditemukan tower di workspace yang dekat dengan posisi terekam (dalam radius 20 stud)
-        if closestObj and shortestDist < 20 then
+        -- Radius toleransi kedekatan 15 stud agar tidak salah ambil tower tetangga
+        if closestObj and shortestDist < 15 then
             return closestObj
         end
     end
 
-    -- Fallback pencarian standar jika posisi tidak tersedia
+    -- Fallback jika posisi tidak valid
     local obj = workspace
     for segment in string.gmatch(path or "", "[^.]+") do
         if segment ~= "Workspace" and segment ~= "game" then
@@ -291,7 +291,7 @@ local function LoadMacroFromFile(name)
     end
 end
 
---//========== PROSES PLAYBACK BERBASIS CASH & STRICT BLOCKING ==========
+--//========== PROSES PLAYBACK + REPLICATION STABILIZATION ==========
 local function StartPlayback()
     if recording or #recordedActions == 0 or playing then return end
     playing = true
@@ -303,7 +303,7 @@ local function StartPlayback()
     end
 
     task.spawn(function()
-        log("PLAY", string.format("▶ Memulai '%s' [Cash-Based & Spatial Target Resolution]...", currentMacroName))
+        log("PLAY", string.format("▶ Memulai '%s' [Cash-Based & Replication Stabilization]...", currentMacroName))
 
         for i, act in ipairs(recordedActions) do
             if not playing then break end
@@ -351,7 +351,13 @@ local function StartPlayback()
 
             if actionSuccess then
                 log("PLAY", string.format("✅ [%d/%d] Sukses dieksekusi: %s", i, #recordedActions, act.remoteName))
-                task.wait(0.05)
+                
+                -- Jika aksi adalah PlaceTower, berikan jeda kecil agar model tower sempat ter-replikasi di workspace
+                if act.remoteName == "PlaceTower" then
+                    task.wait(0.25)
+                else
+                    task.wait(0.05)
+                end
             end
         end
 
@@ -439,7 +445,7 @@ local function createUI()
     local title = Instance.new("TextLabel")
     title.Size = UDim2.new(1, 0, 0, 32)
     title.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
-    title.Text = "⚡ MACRO • Spatial & Cash-Based"
+    title.Text = "⚡ MACRO • Spatial & Replication Fixed"
     title.TextColor3 = Color3.fromRGB(255, 255, 255)
     title.TextSize = 11
     title.Font = Enum.Font.GothamBold
