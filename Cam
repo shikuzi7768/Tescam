@@ -1,6 +1,6 @@
 --//============================================================
---// ROBLOX MACRO - Cash-Based Sequential & Strict Filtering
---// Fitur: Cash-Based Execution, Strict Success Blocking, Auto Rejoin, Multi-Remote, Auto 2x/3x Speed, Auto Summon x25, Auto Spin Wheel, Auto Open Crate x6
+--// ROBLOX MACRO - Cash-Based + Spatial Proximity Tower Resolution
+--// Fitur: Spatial Tower Matching, Cash-Based Execution, Strict Success Blocking, Auto Rejoin, Multi-Remote, Auto 2x/3x Speed, Auto Summon x25, Auto Spin Wheel, Auto Open Crate x6
 --//============================================================
 
 local Players           = game:GetService("Players")
@@ -62,11 +62,24 @@ local function SetGameSpeed(speed)
     end)
 end
 
---//========== SERIALISASI TIPE DATA ROBLOX (VECTOR3, CFRAME, INSTANCE, ENUM) ==========
+--//========== SERIALISASI DENGAN POSISI SPASIAL (MENGATASI TOWER IDENTIK) ==========
 local function SerializeVal(v)
     local t = typeof(v)
     if t == "Instance" then
-        return { __type = "Instance", path = v:GetFullName(), name = v.Name }
+        local pos = nil
+        pcall(function()
+            if v:IsA("Model") then
+                local p = v.PrimaryPart or v:FindFirstChildWhichIsA("BasePart")
+                if p then 
+                    pos = {x = p.Position.X, y = p.Position.Y, z = p.Position.Z} 
+                else 
+                    pos = {x = v:GetPivot().Position.X, y = v:GetPivot().Position.Y, z = v:GetPivot().Position.Z} 
+                end
+            elseif v:IsA("BasePart") then
+                pos = {x = v.Position.X, y = v.Position.Y, z = v.Position.Z}
+            end
+        end)
+        return { __type = "Instance", path = v:GetFullName(), name = v.Name, pos = pos }
     elseif t == "Vector3" then
         return { __type = "Vector3", x = v.X, y = v.Y, z = v.Z }
     elseif t == "CFrame" then
@@ -96,7 +109,40 @@ local function SerializeArgs(args)
     return serialized
 end
 
-local function ResolveInstance(path, name)
+--//========== RESOLUSI INSTANCE BERDASARKAN KEDEKATAN POSISI (SPATIAL PROXIMITY) ==========
+local function ResolveInstance(path, name, recordedPos)
+    if recordedPos and type(recordedPos) == "table" then
+        local targetVector = Vector3.new(recordedPos.x, recordedPos.y, recordedPos.z)
+        local closestObj = nil
+        local shortestDist = math.huge
+
+        for _, desc in ipairs(workspace:GetDescendants()) do
+            if desc.Name == name or (desc:IsA("Model") and desc.Name == name) then
+                local p = nil
+                if desc:IsA("Model") then
+                    local part = desc.PrimaryPart or desc:FindFirstChildWhichIsA("BasePart")
+                    if part then p = part.Position else p = desc:GetPivot().Position end
+                elseif desc:IsA("BasePart") then
+                    p = desc.Position
+                end
+
+                if p then
+                    local dist = (p - targetVector).Magnitude
+                    if dist < shortestDist then
+                        shortestDist = dist
+                        closestObj = desc
+                    end
+                end
+            end
+        end
+
+        -- Jika ditemukan tower di workspace yang dekat dengan posisi terekam (dalam radius 20 stud)
+        if closestObj and shortestDist < 20 then
+            return closestObj
+        end
+    end
+
+    -- Fallback pencarian standar jika posisi tidak tersedia
     local obj = workspace
     for segment in string.gmatch(path or "", "[^.]+") do
         if segment ~= "Workspace" and segment ~= "game" then
@@ -110,7 +156,7 @@ end
 local function DeserializeVal(v)
     if type(v) == "table" then
         if v.__type == "Instance" then
-            return ResolveInstance(v.path, v.name)
+            return ResolveInstance(v.path, v.name, v.pos)
         elseif v.__type == "Vector3" then
             return Vector3.new(v.x or 0, v.y or 0, v.z or 0)
         elseif v.__type == "CFrame" and v.components then
@@ -257,7 +303,7 @@ local function StartPlayback()
     end
 
     task.spawn(function()
-        log("PLAY", string.format("▶ Memulai '%s' [Cash-Based & Strict Sequential]...", currentMacroName))
+        log("PLAY", string.format("▶ Memulai '%s' [Cash-Based & Spatial Target Resolution]...", currentMacroName))
 
         for i, act in ipairs(recordedActions) do
             if not playing then break end
@@ -265,8 +311,6 @@ local function StartPlayback()
             local actionSuccess = false
             local retryAttempts = 0
 
-            -- Loop ketat: Terus mencoba aksi saat ini sampai berhasil (misal: menunggu cash cukup)
-            -- Makro TIDAK AKAN lanjut ke tahap berikutnya sebelum aksi ini benar-benar sukses.
             repeat
                 if not playing then break end
 
@@ -299,7 +343,6 @@ local function StartPlayback()
 
                 if not actionSuccess then
                     retryAttempts = retryAttempts + 1
-                    -- Cek ulang setiap 0.2 detik (menunggu cash cukup atau kondisi valid)
                     task.wait(0.2)
                 end
             until actionSuccess or not playing
@@ -308,7 +351,6 @@ local function StartPlayback()
 
             if actionSuccess then
                 log("PLAY", string.format("✅ [%d/%d] Sukses dieksekusi: %s", i, #recordedActions, act.remoteName))
-                -- Jeda mikro antar aksi agar server tidak overload
                 task.wait(0.05)
             end
         end
@@ -397,7 +439,7 @@ local function createUI()
     local title = Instance.new("TextLabel")
     title.Size = UDim2.new(1, 0, 0, 32)
     title.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
-    title.Text = "⚡ MACRO • Cash-Based & Utilities"
+    title.Text = "⚡ MACRO • Spatial & Cash-Based"
     title.TextColor3 = Color3.fromRGB(255, 255, 255)
     title.TextSize = 11
     title.Font = Enum.Font.GothamBold
@@ -613,7 +655,6 @@ local function createUI()
     refreshAutoSummonUI()
     refreshAutoSpinUI()
 
-    --// INPUT NAMA CRATE & TOMBOL AUTO OPEN CRATE x6
     local crateInput = Instance.new("TextBox")
     crateInput.Size = UDim2.new(1, -20, 0, 24)
     crateInput.Position = UDim2.new(0, 10, 0, 300)
@@ -812,7 +853,6 @@ task.spawn(function()
 
         if recording and typeof(self) == "Instance" and TARGET_REMOTES[self.Name] then
             if method == "InvokeServer" or method == "invokeServer" or method == "FireServer" or method == "fireServer" then
-                -- Jalankan remote terlebih dahulu untuk menguji apakah berhasil di server
                 local results = { oldNamecall(self, ...) }
                 local res = results[1]
 
@@ -821,7 +861,6 @@ task.spawn(function()
                     isSuccess = false
                 end
 
-                -- HANYA rekam jika aksi benar-benar sukses (bukan gagal/ditolak server)
                 if isSuccess then
                     task.spawn(function()
                         pcall(function()
