@@ -1,6 +1,6 @@
 --//============================================================
---// ROBLOX MACRO - Cash-Based + Spatial Proximity & Replication Fix
---// Fitur: Replication Stabilization, Spatial Tower Matching, Cash-Based Execution, Strict Success Blocking, Auto Rejoin
+--// ROBLOX MACRO - Cash-Based Sequential & Strict Filtering
+--// Fitur: Cash-Based Execution, Strict Success Blocking, Auto Rejoin, Multi-Remote, Auto 2x/3x Speed, Auto Summon x25, Auto Spin Wheel, Auto Open Crate x6, Detailed Action Indexing (#1, #2, dst)
 --//============================================================
 
 local Players           = game:GetService("Players")
@@ -62,24 +62,11 @@ local function SetGameSpeed(speed)
     end)
 end
 
---//========== SERIALISASI DENGAN POSISI SPASIAL ==========
+--//========== SERIALISASI TIPE DATA ROBLOX (VECTOR3, CFRAME, INSTANCE, ENUM) ==========
 local function SerializeVal(v)
     local t = typeof(v)
     if t == "Instance" then
-        local pos = nil
-        pcall(function()
-            if v:IsA("Model") then
-                local p = v.PrimaryPart or v:FindFirstChildWhichIsA("BasePart")
-                if p then 
-                    pos = {x = p.Position.X, y = p.Position.Y, z = p.Position.Z} 
-                else 
-                    pos = {x = v:GetPivot().Position.X, y = v:GetPivot().Position.Y, z = v:GetPivot().Position.Z} 
-                end
-            elseif v:IsA("BasePart") then
-                pos = {x = v.Position.X, y = v.Position.Y, z = v.Position.Z}
-            end
-        end)
-        return { __type = "Instance", path = v:GetFullName(), name = v.Name, pos = pos }
+        return { __type = "Instance", path = v:GetFullName(), name = v.Name }
     elseif t == "Vector3" then
         return { __type = "Vector3", x = v.X, y = v.Y, z = v.Z }
     elseif t == "CFrame" then
@@ -109,40 +96,7 @@ local function SerializeArgs(args)
     return serialized
 end
 
---//========== RESOLUSI INSTANCE BERDASARKAN KEDEKATAN POSISI (SPATIAL PROXIMITY) ==========
-local function ResolveInstance(path, name, recordedPos)
-    if recordedPos and type(recordedPos) == "table" then
-        local targetVector = Vector3.new(recordedPos.x, recordedPos.y, recordedPos.z)
-        local closestObj = nil
-        local shortestDist = math.huge
-
-        for _, desc in ipairs(workspace:GetDescendants()) do
-            if desc.Name == name or (desc:IsA("Model") and desc.Name == name) then
-                local p = nil
-                if desc:IsA("Model") then
-                    local part = desc.PrimaryPart or desc:FindFirstChildWhichIsA("BasePart")
-                    if part then p = part.Position else p = desc:GetPivot().Position end
-                elseif desc:IsA("BasePart") then
-                    p = desc.Position
-                end
-
-                if p then
-                    local dist = (p - targetVector).Magnitude
-                    if dist < shortestDist then
-                        shortestDist = dist
-                        closestObj = desc
-                    end
-                end
-            end
-        end
-
-        -- Radius toleransi kedekatan 15 stud agar tidak salah ambil tower tetangga
-        if closestObj and shortestDist < 15 then
-            return closestObj
-        end
-    end
-
-    -- Fallback jika posisi tidak valid
+local function ResolveInstance(path, name)
     local obj = workspace
     for segment in string.gmatch(path or "", "[^.]+") do
         if segment ~= "Workspace" and segment ~= "game" then
@@ -156,7 +110,7 @@ end
 local function DeserializeVal(v)
     if type(v) == "table" then
         if v.__type == "Instance" then
-            return ResolveInstance(v.path, v.name, v.pos)
+            return ResolveInstance(v.path, v.name)
         elseif v.__type == "Vector3" then
             return Vector3.new(v.x or 0, v.y or 0, v.z or 0)
         elseif v.__type == "CFrame" and v.components then
@@ -243,7 +197,8 @@ local function SaveMacroToFile(name)
         table.insert(cleanActions, {
             remoteName  = act.remoteName,
             remoteClass = act.remoteClass,
-            args        = act.args
+            args        = act.args,
+            actionIndex = act.actionIndex
         })
     end
 
@@ -280,7 +235,8 @@ local function LoadMacroFromFile(name)
                 remote      = GetRemoteByName(act.remoteName),
                 remoteName  = act.remoteName,
                 remoteClass = act.remoteClass,
-                args        = act.args
+                args        = act.args,
+                actionIndex = act.actionIndex or 1
             })
         end
         log("LOAD", string.format("📂 Profil '%s' dimuat (%d aksi)", name, #recordedActions))
@@ -291,7 +247,7 @@ local function LoadMacroFromFile(name)
     end
 end
 
---//========== PROSES PLAYBACK + REPLICATION STABILIZATION ==========
+--//========== PROSES PLAYBACK BERBASIS CASH & STRICT BLOCKING ==========
 local function StartPlayback()
     if recording or #recordedActions == 0 or playing then return end
     playing = true
@@ -303,14 +259,16 @@ local function StartPlayback()
     end
 
     task.spawn(function()
-        log("PLAY", string.format("▶ Memulai '%s' [Cash-Based & Replication Stabilization]...", currentMacroName))
+        log("PLAY", string.format("▶ Memulai '%s' [Cash-Based & Strict Sequential]...", currentMacroName))
 
         for i, act in ipairs(recordedActions) do
             if not playing then break end
 
             local actionSuccess = false
             local retryAttempts = 0
+            local idxStr = act.actionIndex and (" #" .. act.actionIndex) or ""
 
+            -- Loop ketat: Terus mencoba aksi sampai berhasil (menunggu cash cukup)
             repeat
                 if not playing then break end
 
@@ -350,14 +308,8 @@ local function StartPlayback()
             if not playing then break end
 
             if actionSuccess then
-                log("PLAY", string.format("✅ [%d/%d] Sukses dieksekusi: %s", i, #recordedActions, act.remoteName))
-                
-                -- Jika aksi adalah PlaceTower, berikan jeda kecil agar model tower sempat ter-replikasi di workspace
-                if act.remoteName == "PlaceTower" then
-                    task.wait(0.25)
-                else
-                    task.wait(0.05)
-                end
+                log("PLAY", string.format("✅ [%d/%d] Sukses dieksekusi: %s%s", i, #recordedActions, act.remoteName, idxStr))
+                task.wait(0.05)
             end
         end
 
@@ -445,7 +397,7 @@ local function createUI()
     local title = Instance.new("TextLabel")
     title.Size = UDim2.new(1, 0, 0, 32)
     title.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
-    title.Text = "⚡ MACRO • Spatial & Replication Fixed"
+    title.Text = "⚡ MACRO • Cash-Based & Utilities"
     title.TextColor3 = Color3.fromRGB(255, 255, 255)
     title.TextSize = 11
     title.Font = Enum.Font.GothamBold
@@ -735,6 +687,8 @@ local function createUI()
         gameSpeedBtn.Text = string.format("🎮 Game Speed: %.1fx", currentGameSpeed)
     end
 
+    local actionCounters = {} -- Menyimpan penghitung per remote name
+
     recBtn.MouseButton1Click:Connect(function()
         if recording then
             recording = false
@@ -746,6 +700,7 @@ local function createUI()
         else
             if playing then return end
             recordedActions = {}
+            actionCounters  = {} -- Reset counter saat mulai rekaman baru
             recording       = true
             recBtn.Text     = "⏹ STOP"
             recBtn.BackgroundColor3 = Color3.fromRGB(110, 30, 30)
@@ -843,7 +798,7 @@ end
 
 createUI()
 
---//========== HOOK INTERCEPTOR: HANYA MEREKAM AKSI YANG SUKSES ==========
+--//========== HOOK INTERCEPTOR: MEREKAM & MENOMORI AKSI SUKSES ==========
 task.spawn(function()
     local oldNamecall
     oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
@@ -870,15 +825,21 @@ task.spawn(function()
                 if isSuccess then
                     task.spawn(function()
                         pcall(function()
+                            -- Inisialisasi atau increment penghitung untuk remote ini
+                            if not _G.MacroActionCounters then _G.MacroActionCounters = {} end
+                            _G.MacroActionCounters[self.Name] = (_G.MacroActionCounters[self.Name] or 0) + 1
+                            local currentActionIdx = _G.MacroActionCounters[self.Name]
+
                             local sArgs = SerializeArgs(args)
                             table.insert(recordedActions, {
                                 remote      = self,
                                 remoteName  = self.Name,
                                 remoteClass = self.ClassName,
-                                args        = sArgs
+                                args        = sArgs,
+                                actionIndex = currentActionIdx
                             })
-                            log("RECORD", string.format("✅ Berhasil Terekam [#%d]: '%s' (%s)", 
-                                #recordedActions, self.Name, self.ClassName))
+                            log("RECORD", string.format("✅ Berhasil Terekam [#%d] (%s #%d)", 
+                                #recordedActions, self.Name, currentActionIdx))
                         end)
                     end)
                 else
