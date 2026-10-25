@@ -1,6 +1,6 @@
 --//============================================================
---// ROBLOX MACRO v1.2.2 - Cash-Based Sequential & Strict Filtering
---// Fitur: Place, Upgrade, Sell, CinemaRelocate, Cash-Based Execution, Strict Success Blocking, Auto Rejoin, Multi-Remote, Auto 2x/2.5x/3x/3.5x Speed, Auto Summon x25, Auto Spin Wheel, Auto Open Crate x6, Spatial Position Resolution
+--// ROBLOX MACRO v1.2.3 - Cash-Based Sequential & Strict Filtering
+--// Fitur: Place, Upgrade, Sell, CinemaRelocate, Cash-Based Execution, Strict Success Blocking, Auto Rejoin, Multi-Remote, Auto 2x/2.5x/3x/3.5x/4.5x Speed, Auto Summon x25, Auto Spin Wheel, Auto Open Crate x6, Spatial Position Resolution
 --//============================================================
 
 local Players           = game:GetService("Players")
@@ -28,6 +28,7 @@ local auto2xSpeedEnabled   = false
 local auto2_5xSpeedEnabled = false
 local auto3xSpeedEnabled   = false
 local auto3_5xSpeedEnabled = false
+local auto4_5xSpeedEnabled = false
 local autoSummonEnabled    = false
 local autoSpinEnabled      = false
 local autoOpenCrateEnabled = false
@@ -41,7 +42,7 @@ local currentMacroName     = "Makro 1"
 local CONFIG_FILE = "TD_Macro_Config.json"
 
 local function log(tag, msg)
-    print(string.format("[%s][MACRO v1.2.2][%s] %s", os.date("%H:%M:%S"), tag, msg))
+    print(string.format("[%s][MACRO v1.2.3][%s] %s", os.date("%H:%M:%S"), tag, msg))
 end
 
 local function GetFileName(profileName)
@@ -210,6 +211,7 @@ local function SaveConfig()
             auto2_5xSpeed    = auto2_5xSpeedEnabled,
             auto3xSpeed      = auto3xSpeedEnabled,
             auto3_5xSpeed    = auto3_5xSpeedEnabled,
+            auto4_5xSpeed    = auto4_5xSpeedEnabled,
             autoSummon       = autoSummonEnabled,
             autoSpin         = autoSpinEnabled,
             autoOpenCrate    = autoOpenCrateEnabled,
@@ -232,6 +234,7 @@ local function LoadConfig()
             if parsed.auto2_5xSpeed ~= nil then auto2_5xSpeedEnabled = parsed.auto2_5xSpeed end
             if parsed.auto3xSpeed ~= nil then auto3xSpeedEnabled = parsed.auto3xSpeed end
             if parsed.auto3_5xSpeed ~= nil then auto3_5xSpeedEnabled = parsed.auto3_5xSpeed end
+            if parsed.auto4_5xSpeed ~= nil then auto4_5xSpeedEnabled = parsed.auto4_5xSpeed end
             if parsed.autoSummon ~= nil then autoSummonEnabled = parsed.autoSummon end
             if parsed.autoSpin ~= nil then autoSpinEnabled = parsed.autoSpin end
             if parsed.autoOpenCrate ~= nil then autoOpenCrateEnabled = parsed.autoOpenCrate end
@@ -312,7 +315,9 @@ local function StartPlayback()
     if recording or #recordedActions == 0 or playing then return end
     playing = true
 
-    if auto3_5xSpeedEnabled then
+    if auto4_5xSpeedEnabled then
+        SetGameSpeed(4.5)
+    elseif auto3_5xSpeedEnabled then
         SetGameSpeed(3.5)
     elseif auto3xSpeedEnabled then
         SetGameSpeed(3.0)
@@ -323,7 +328,7 @@ local function StartPlayback()
     end
 
     task.spawn(function()
-        log("PLAY", string.format("▶ Memulai '%s' v1.2.2 [Cash-Based & Strict Sequential]...", currentMacroName))
+        log("PLAY", string.format("▶ Memulai '%s' v1.2.3 [Cash-Based & Strict Sequential]...", currentMacroName))
 
         for i, act in ipairs(recordedActions) do
             if not playing then break end
@@ -377,7 +382,7 @@ local function StartPlayback()
         end
 
         playing = false
-        log("PLAY", "✅ Playback Makro v1.2.2 Selesai.")
+        log("PLAY", "✅ Playback Makro v1.2.3 Selesai.")
     end)
 end
 
@@ -440,7 +445,7 @@ local function createUI()
     gui.Parent = parent
 
     local main = Instance.new("Frame")
-    main.Size = UDim2.new(0, 300, 0, 435)
+    main.Size = UDim2.new(0, 300, 0, 465)
     main.Position = UDim2.new(0, 20, 0, 100)
     main.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
     main.Active = true
@@ -453,7 +458,7 @@ local function createUI()
     local title = Instance.new("TextLabel")
     title.Size = UDim2.new(1, 0, 0, 32)
     title.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
-    title.Text = "⚡ MACRO v1.2.2 • Speed 2.5x & Utilities"
+    title.Text = "⚡ MACRO v1.2.3 • Speed 4.5x & Utilities"
     title.TextColor3 = Color3.fromRGB(255, 255, 255)
     title.TextSize = 11
     title.Font = Enum.Font.GothamBold
@@ -475,7 +480,7 @@ local function createUI()
     local isMinimized = false
     minBtn.MouseButton1Click:Connect(function()
         isMinimized = not isMinimized
-        local targetSize = isMinimized and UDim2.new(0, 300, 0, 32) or UDim2.new(0, 300, 0, 435)
+        local targetSize = isMinimized and UDim2.new(0, 300, 0, 32) or UDim2.new(0, 300, 0, 465)
         TweenService:Create(main, TweenInfo.new(0.25, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), { Size = targetSize }):Play()
         minBtn.Text = isMinimized and "+" or "-"
     end)
@@ -581,38 +586,46 @@ local function createUI()
     gameSpeedBtn.Parent = main
     Instance.new("UICorner", gameSpeedBtn).CornerRadius = UDim.new(0, 5)
 
-    --// 4 Tombol Kecepatan (Grid 2x2: 2x, 2.5x, 3x, 3.5x)
+    --// 5 Tombol Kecepatan (Baris 1: 2x, 2.5x, 3x | Baris 2: 3.5x, 4.5x)
     local auto2x = Instance.new("TextButton")
-    auto2x.Size = UDim2.new(0.5, -15, 0, 26)
+    auto2x.Size = UDim2.new(0.33, -8, 0, 26)
     auto2x.Position = UDim2.new(0, 10, 0, 236)
     auto2x.Font = Enum.Font.GothamBold
-    auto2x.TextSize = 10
+    auto2x.TextSize = 9
     auto2x.Parent = main
     Instance.new("UICorner", auto2x).CornerRadius = UDim.new(0, 5)
 
     local auto2_5x = Instance.new("TextButton")
-    auto2_5x.Size = UDim2.new(0.5, -15, 0, 26)
-    auto2_5x.Position = UDim2.new(0.5, 5, 0, 236)
+    auto2_5x.Size = UDim2.new(0.33, -8, 0, 26)
+    auto2_5x.Position = UDim2.new(0.33, 4, 0, 236)
     auto2_5x.Font = Enum.Font.GothamBold
-    auto2_5x.TextSize = 10
+    auto2_5x.TextSize = 9
     auto2_5x.Parent = main
     Instance.new("UICorner", auto2_5x).CornerRadius = UDim.new(0, 5)
 
     local auto3x = Instance.new("TextButton")
-    auto3x.Size = UDim2.new(0.5, -15, 0, 26)
-    auto3x.Position = UDim2.new(0, 10, 0, 268)
+    auto3x.Size = UDim2.new(0.33, -8, 0, 26)
+    auto3x.Position = UDim2.new(0.66, -2, 0, 236)
     auto3x.Font = Enum.Font.GothamBold
-    auto3x.TextSize = 10
+    auto3x.TextSize = 9
     auto3x.Parent = main
     Instance.new("UICorner", auto3x).CornerRadius = UDim.new(0, 5)
 
     local auto3_5x = Instance.new("TextButton")
     auto3_5x.Size = UDim2.new(0.5, -15, 0, 26)
-    auto3_5x.Position = UDim2.new(0.5, 5, 0, 268)
+    auto3_5x.Position = UDim2.new(0, 10, 0, 268)
     auto3_5x.Font = Enum.Font.GothamBold
     auto3_5x.TextSize = 10
     auto3_5x.Parent = main
     Instance.new("UICorner", auto3_5x).CornerRadius = UDim.new(0, 5)
+
+    local auto4_5x = Instance.new("TextButton")
+    auto4_5x.Size = UDim2.new(0.5, -15, 0, 26)
+    auto4_5x.Position = UDim2.new(0.5, 5, 0, 268)
+    auto4_5x.Font = Enum.Font.GothamBold
+    auto4_5x.TextSize = 10
+    auto4_5x.Parent = main
+    Instance.new("UICorner", auto4_5x).CornerRadius = UDim.new(0, 5)
 
     local function refreshSpeedButtonsUI()
         if auto2xSpeedEnabled then
@@ -653,6 +666,16 @@ local function createUI()
             auto3_5x.Text = "🚀 3.5x: OFF"
             auto3_5x.BackgroundColor3 = Color3.fromRGB(60, 60, 75)
             auto3_5x.TextColor3 = Color3.fromRGB(200, 200, 200)
+        end
+
+        if auto4_5xSpeedEnabled then
+            auto4_5x.Text = "⭐ 4.5x: ON"
+            auto4_5x.BackgroundColor3 = Color3.fromRGB(40, 140, 70)
+            auto4_5x.TextColor3 = Color3.fromRGB(255, 255, 255)
+        else
+            auto4_5x.Text = "⭐ 4.5x: OFF"
+            auto4_5x.BackgroundColor3 = Color3.fromRGB(60, 60, 75)
+            auto4_5x.TextColor3 = Color3.fromRGB(200, 200, 200)
         end
     end
     refreshSpeedButtonsUI()
@@ -822,6 +845,7 @@ local function createUI()
             auto2_5xSpeedEnabled = false
             auto3xSpeedEnabled = false
             auto3_5xSpeedEnabled = false
+            auto4_5xSpeedEnabled = false
             SetGameSpeed(2.0)
         end
         refreshSpeedButtonsUI()
@@ -834,6 +858,7 @@ local function createUI()
             auto2xSpeedEnabled = false
             auto3xSpeedEnabled = false
             auto3_5xSpeedEnabled = false
+            auto4_5xSpeedEnabled = false
             SetGameSpeed(2.5)
         end
         refreshSpeedButtonsUI()
@@ -846,6 +871,7 @@ local function createUI()
             auto2xSpeedEnabled = false
             auto2_5xSpeedEnabled = false
             auto3_5xSpeedEnabled = false
+            auto4_5xSpeedEnabled = false
             SetGameSpeed(3.0)
         end
         refreshSpeedButtonsUI()
@@ -858,7 +884,21 @@ local function createUI()
             auto2xSpeedEnabled = false
             auto2_5xSpeedEnabled = false
             auto3xSpeedEnabled = false
+            auto4_5xSpeedEnabled = false
             SetGameSpeed(3.5)
+        end
+        refreshSpeedButtonsUI()
+        SaveConfig()
+    end)
+
+    auto4_5x.MouseButton1Click:Connect(function()
+        auto4_5xSpeedEnabled = not auto4_5xSpeedEnabled
+        if auto4_5xSpeedEnabled then
+            auto2xSpeedEnabled = false
+            auto2_5xSpeedEnabled = false
+            auto3xSpeedEnabled = false
+            auto3_5xSpeedEnabled = false
+            SetGameSpeed(4.5)
         end
         refreshSpeedButtonsUI()
         SaveConfig()
@@ -877,7 +917,7 @@ local function createUI()
         end
     end)
 
-    local gameSpeeds = {1.0, 1.5, 2.0, 2.5, 3.0, 3.5}
+    local gameSpeeds = {1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.5}
     local gameSpeedIdx = 1
     gameSpeedBtn.MouseButton1Click:Connect(function()
         gameSpeedIdx = (gameSpeedIdx % #gameSpeeds) + 1
@@ -952,7 +992,9 @@ end)
 task.spawn(function()
     task.wait(3)
     
-    if auto3_5xSpeedEnabled then
+    if auto4_5xSpeedEnabled then
+        SetGameSpeed(4.5)
+    elseif auto3_5xSpeedEnabled then
         SetGameSpeed(3.5)
     elseif auto3xSpeedEnabled then
         SetGameSpeed(3.0)
@@ -963,12 +1005,14 @@ task.spawn(function()
     end
 
     if LoadMacroFromFile(currentMacroName) then
-        log("INIT", string.format("📂 Makro '%s' v1.2.2 berhasil dimuat dari file tersimpan.", currentMacroName))
+        log("INIT", string.format("📂 Makro '%s' v1.2.3 berhasil dimuat dari file tersimpan.", currentMacroName))
         
         if autoPlayEnabled then
             log("AUTOPLAY", "🤖 Auto Play ON. Menunggu 8 detik (fase Vote Difficulty)...")
             task.wait(8)
-            if auto3_5xSpeedEnabled then
+            if auto4_5xSpeedEnabled then
+                SetGameSpeed(4.5)
+            elseif auto3_5xSpeedEnabled then
                 SetGameSpeed(3.5)
             elseif auto3xSpeedEnabled then
                 SetGameSpeed(3.0)
