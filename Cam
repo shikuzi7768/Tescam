@@ -1,6 +1,6 @@
 --//============================================================
---// ROBLOX MACRO v1.2.3 - Cash-Based Sequential & Strict Filtering
---// Fitur: Place, Upgrade, Sell, CinemaRelocate, Cash-Based Execution, Strict Success Blocking, Auto Rejoin, Multi-Remote, Auto 2x/2.5x/3x/3.5x/4.5x Speed, Auto Summon x25, Auto Spin Wheel, Auto Open Crate x6, Spatial Position Resolution
+--// ROBLOX MACRO v1.2.4 - Cash-Based Sequential & Strict Filtering
+--// Fitur: Place, Upgrade, Sell, CinemaRelocate, Cash-Based Execution, Strict Success Blocking, Auto Rejoin, Multi-Remote, Auto 2x/2.5x/3x/3.5x/4.5x Speed, Auto Summon x25, Auto Spin Wheel, Auto Open Crate x6, Auto Buy Halloween Crate x10, Spatial Position Resolution
 --//============================================================
 
 local Players           = game:GetService("Players")
@@ -21,28 +21,29 @@ local TARGET_REMOTES = {
     ["Ability"]         = true
 }
 
-local recording            = false
-local playing              = false
-local autoPlayEnabled      = false
-local auto2xSpeedEnabled   = false
-local auto2_5xSpeedEnabled = false
-local auto3xSpeedEnabled   = false
-local auto3_5xSpeedEnabled = false
-local auto4_5xSpeedEnabled = false
-local autoSummonEnabled    = false
-local autoSpinEnabled      = false
-local autoOpenCrateEnabled = false
+local recording                   = false
+local playing                     = false
+local autoPlayEnabled             = false
+local auto2xSpeedEnabled          = false
+local auto2_5xSpeedEnabled        = false
+local auto3xSpeedEnabled          = false
+local auto3_5xSpeedEnabled        = false
+local auto4_5xSpeedEnabled        = false
+local autoSummonEnabled           = false
+local autoSpinEnabled             = false
+local autoOpenCrateEnabled        = false
+local autoBuyHalloweenCrateEnabled = false
 
-local selectedCrateName    = "10MCrate"
+local selectedCrateName           = "10MCrate"
 
-local recordedActions      = {}
-local currentGameSpeed     = 1.0
-local currentMacroName     = "Makro 1"
+local recordedActions             = {}
+local currentGameSpeed            = 1.0
+local currentMacroName            = "Makro 1"
 
 local CONFIG_FILE = "TD_Macro_Config.json"
 
 local function log(tag, msg)
-    print(string.format("[%s][MACRO v1.2.3][%s] %s", os.date("%H:%M:%S"), tag, msg))
+    print(string.format("[%s][MACRO v1.2.4][%s] %s", os.date("%H:%M:%S"), tag, msg))
 end
 
 local function GetFileName(profileName)
@@ -206,18 +207,19 @@ local function SaveConfig()
     if not writefile then return end
     pcall(function()
         local cfg = {
-            autoPlay         = autoPlayEnabled,
-            auto2xSpeed      = auto2xSpeedEnabled,
-            auto2_5xSpeed    = auto2_5xSpeedEnabled,
-            auto3xSpeed      = auto3xSpeedEnabled,
-            auto3_5xSpeed    = auto3_5xSpeedEnabled,
-            auto4_5xSpeed    = auto4_5xSpeedEnabled,
-            autoSummon       = autoSummonEnabled,
-            autoSpin         = autoSpinEnabled,
-            autoOpenCrate    = autoOpenCrateEnabled,
-            selectedCrate    = selectedCrateName,
-            lastMacroName    = currentMacroName,
-            currentGameSpeed = currentGameSpeed
+            autoPlay              = autoPlayEnabled,
+            auto2xSpeed           = auto2xSpeedEnabled,
+            auto2_5xSpeed         = auto2_5xSpeedEnabled,
+            auto3xSpeed           = auto3xSpeedEnabled,
+            auto3_5xSpeed         = auto3_5xSpeedEnabled,
+            auto4_5xSpeed         = auto4_5xSpeedEnabled,
+            autoSummon            = autoSummonEnabled,
+            autoSpin              = autoSpinEnabled,
+            autoOpenCrate         = autoOpenCrateEnabled,
+            autoBuyHalloweenCrate = autoBuyHalloweenCrateEnabled,
+            selectedCrate         = selectedCrateName,
+            lastMacroName         = currentMacroName,
+            currentGameSpeed      = currentGameSpeed
         }
         writefile(CONFIG_FILE, HttpService:JSONEncode(cfg))
         log("CONFIG", "💾 Konfigurasi makro berhasil diperbarui.")
@@ -238,6 +240,7 @@ local function LoadConfig()
             if parsed.autoSummon ~= nil then autoSummonEnabled = parsed.autoSummon end
             if parsed.autoSpin ~= nil then autoSpinEnabled = parsed.autoSpin end
             if parsed.autoOpenCrate ~= nil then autoOpenCrateEnabled = parsed.autoOpenCrate end
+            if parsed.autoBuyHalloweenCrate ~= nil then autoBuyHalloweenCrateEnabled = parsed.autoBuyHalloweenCrate end
             if parsed.selectedCrate then selectedCrateName = parsed.selectedCrate end
             if parsed.lastMacroName then currentMacroName = parsed.lastMacroName end
             if parsed.currentGameSpeed then currentGameSpeed = parsed.currentGameSpeed end
@@ -328,7 +331,7 @@ local function StartPlayback()
     end
 
     task.spawn(function()
-        log("PLAY", string.format("▶ Memulai '%s' v1.2.3 [Cash-Based & Strict Sequential]...", currentMacroName))
+        log("PLAY", string.format("▶ Memulai '%s' v1.2.4 [Cash-Based & Strict Sequential]...", currentMacroName))
 
         for i, act in ipairs(recordedActions) do
             if not playing then break end
@@ -382,7 +385,7 @@ local function StartPlayback()
         end
 
         playing = false
-        log("PLAY", "✅ Playback Makro v1.2.3 Selesai.")
+        log("PLAY", "✅ Playback Makro v1.2.4 Selesai.")
     end)
 end
 
@@ -434,6 +437,22 @@ task.spawn(function()
     end
 end)
 
+task.spawn(function()
+    while true do
+        if autoBuyHalloweenCrateEnabled then
+            pcall(function()
+                local halloweenCrateRemote = ReplicatedStorage:FindFirstChild("RemoteFunctions") and ReplicatedStorage.RemoteFunctions:FindFirstChild("BuyHalloweenCrate")
+                if halloweenCrateRemote then
+                    halloweenCrateRemote:InvokeServer(10)
+                end
+            end)
+            task.wait(1.5)
+        else
+            task.wait(1)
+        end
+    end
+end)
+
 --//========== GUI MACRO ==========
 local function createUI()
     local parent = (gethui and gethui()) or game:GetService("CoreGui")
@@ -445,7 +464,7 @@ local function createUI()
     gui.Parent = parent
 
     local main = Instance.new("Frame")
-    main.Size = UDim2.new(0, 300, 0, 465)
+    main.Size = UDim2.new(0, 300, 0, 500)
     main.Position = UDim2.new(0, 20, 0, 100)
     main.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
     main.Active = true
@@ -458,7 +477,7 @@ local function createUI()
     local title = Instance.new("TextLabel")
     title.Size = UDim2.new(1, 0, 0, 32)
     title.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
-    title.Text = "⚡ MACRO v1.2.3 • Speed 4.5x & Utilities"
+    title.Text = "⚡ MACRO v1.2.4 • Halloween & Utilities"
     title.TextColor3 = Color3.fromRGB(255, 255, 255)
     title.TextSize = 11
     title.Font = Enum.Font.GothamBold
@@ -480,7 +499,7 @@ local function createUI()
     local isMinimized = false
     minBtn.MouseButton1Click:Connect(function()
         isMinimized = not isMinimized
-        local targetSize = isMinimized and UDim2.new(0, 300, 0, 32) or UDim2.new(0, 300, 0, 465)
+        local targetSize = isMinimized and UDim2.new(0, 300, 0, 32) or UDim2.new(0, 300, 0, 500)
         TweenService:Create(main, TweenInfo.new(0.25, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), { Size = targetSize }):Play()
         minBtn.Text = isMinimized and "+" or "-"
     end)
@@ -586,7 +605,7 @@ local function createUI()
     gameSpeedBtn.Parent = main
     Instance.new("UICorner", gameSpeedBtn).CornerRadius = UDim.new(0, 5)
 
-    --// 5 Tombol Kecepatan (Baris 1: 2x, 2.5x, 3x | Baris 2: 3.5x, 4.5x)
+    --// Tombol Kecepatan
     local auto2x = Instance.new("TextButton")
     auto2x.Size = UDim2.new(0.33, -8, 0, 26)
     auto2x.Position = UDim2.new(0, 10, 0, 236)
@@ -760,6 +779,28 @@ local function createUI()
     end
     refreshAutoCrateUI()
 
+    --// Tombol Auto Buy Halloween Crate x10
+    local autoHalloweenBtn = Instance.new("TextButton")
+    autoHalloweenBtn.Size = UDim2.new(1, -20, 0, 26)
+    autoHalloweenBtn.Position = UDim2.new(0, 10, 0, 396)
+    autoHalloweenBtn.Font = Enum.Font.GothamBold
+    autoHalloweenBtn.TextSize = 10
+    autoHalloweenBtn.Parent = main
+    Instance.new("UICorner", autoHalloweenBtn).CornerRadius = UDim.new(0, 5)
+
+    local function refreshAutoHalloweenUI()
+        if autoBuyHalloweenCrateEnabled then
+            autoHalloweenBtn.Text = "🎃 AUTO BUY HALLOWEEN x10: ON"
+            autoHalloweenBtn.BackgroundColor3 = Color3.fromRGB(40, 140, 70)
+            autoHalloweenBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        else
+            autoHalloweenBtn.Text = "🎃 AUTO BUY HALLOWEEN x10: OFF"
+            autoHalloweenBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 75)
+            autoHalloweenBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+        end
+    end
+    refreshAutoHalloweenUI()
+
     autoSummonBtn.MouseButton1Click:Connect(function()
         autoSummonEnabled = not autoSummonEnabled
         refreshAutoSummonUI()
@@ -775,6 +816,12 @@ local function createUI()
     autoCrateBtn.MouseButton1Click:Connect(function()
         autoOpenCrateEnabled = not autoOpenCrateEnabled
         refreshAutoCrateUI()
+        SaveConfig()
+    end)
+
+    autoHalloweenBtn.MouseButton1Click:Connect(function()
+        autoBuyHalloweenCrateEnabled = not autoBuyHalloweenCrateEnabled
+        refreshAutoHalloweenUI()
         SaveConfig()
     end)
 
@@ -1005,7 +1052,7 @@ task.spawn(function()
     end
 
     if LoadMacroFromFile(currentMacroName) then
-        log("INIT", string.format("📂 Makro '%s' v1.2.3 berhasil dimuat dari file tersimpan.", currentMacroName))
+        log("INIT", string.format("📂 Makro '%s' v1.2.4 berhasil dimuat dari file tersimpan.", currentMacroName))
         
         if autoPlayEnabled then
             log("AUTOPLAY", "🤖 Auto Play ON. Menunggu 8 detik (fase Vote Difficulty)...")
